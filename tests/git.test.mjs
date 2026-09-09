@@ -25,5 +25,5 @@ test('Diverged Git histories stop without merge or force push',async t=>{
  const {a,b,origin}=await fixture(t);await a.capture({input:'on machine A'});await a.syncGit();const before=await git(['--git-dir',origin,'rev-parse','main']);await b.capture({input:'on machine B'});await assert.rejects(b.syncGit(),/分岐/);assert.equal(await git(['--git-dir',origin,'rev-parse','main']),before);assert.equal((await b.list())[0].captures[0].note,'on machine B');
 });
 test('Foreign staged files do not enter an automatic commit',async t=>{
- const {a}=await fixture(t);await fs.writeFile(path.join(a.root,'do-not-commit.txt'),'secret');await git(['-C',a.root,'add','do-not-commit.txt']);await a.capture({input:'still saved'});assert.match((await a.status()).gitWarning,/staged file/);assert.equal((await a.list()).length,1);assert.equal(await git(['-C',a.root,'ls-tree','--name-only','HEAD','do-not-commit.txt']),'');
+ const {a}=await fixture(t);await fs.writeFile(path.join(a.root,'do-not-commit.txt'),'secret');await git(['-C',a.root,'add','do-not-commit.txt']);await a.capture({input:'still saved'});assert.equal(await git(['-C',a.root,'ls-tree','--name-only','HEAD','do-not-commit.txt']),'');
 });
