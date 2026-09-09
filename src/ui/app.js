@@ -78,7 +78,7 @@ async function openDetail(id){
   $('detailAITags').replaceChildren();for(const tag of it.ai_tags || []) $('detailAITags').append(element('span','tag ai-tag',`AI · ${tag}`));
   $('detailSaveStatus').textContent='変更は「保存」で確定';$('archiveButton').textContent=it.archived?'一覧に戻す':'アーカイブ';
   $('detailX').classList.toggle('hidden',it.type!=='x');
-  $('detailEnrich').textContent=it.type==='x' ? '取得済み画像を保存' : '情報を補完';$('detailEnrich').disabled=['note','reading_note'].includes(it.type) || it.type==='x' && !it.preview_url;
+  $('detailEnrich').textContent=it.type==='x' ? (it.preview_url?'取得済み画像を保存':'X oEmbedを再取得') : '情報を補完';$('detailEnrich').disabled=['note','reading_note'].includes(it.type);
   $('detailImage').classList.add('hidden');if(it.preview){const img=await call('asset',{id});if(img){$('detailImage').src=img;$('detailImage').classList.remove('hidden');}}
   if(!$('detailDialog').open)$('detailDialog').showModal();
 }
@@ -109,7 +109,7 @@ $('detailDialog').addEventListener('cancel',e=>{e.preventDefault();closeDialog('
 for(const id of ['detailTitle','detailMemo','detailTags'])$(id).oninput=()=>{state.detailDirty=true;$('detailSaveStatus').textContent='未保存の変更あり';};
 $('saveDetail').onclick=()=>action(saveDetail);
 $('originalButton').onclick=()=>action(()=>call('openURL',{url:state.current.original_url||state.current.url}));
-$('detailEnrich').onclick=()=>action(()=>detailAction(id=>call(state.current.type==='x'?'xImage':'enrich',{id})));
+$('detailEnrich').onclick=()=>action(()=>detailAction(id=>call(state.current.type==='x'&&state.current.preview_url?'xImage':'enrich',{id})));
 $('detailX').onclick=()=>action(async()=>{if(!confirm('公式X APIでこの投稿を取得します。API利用料が発生します。続けますか？'))return;await detailAction(id=>call('xLookup',{id}));});
 $('detailAI').onclick=()=>action(async()=>{if(!confirm('設定済みのLLM APIへこのカードの情報を送信して整理します。API利用料が発生します。続けますか？'))return;await detailAction(id=>call('ai',{id}));});
 $('attachButton').onclick=()=>action(()=>detailAction(id=>call('attachImage',{id})));

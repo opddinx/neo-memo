@@ -6,6 +6,7 @@ import path from 'node:path';
 import { Store, initStore } from '../src/store/index.mjs';
 import { pullSlack,pullDiscord,pullXBookmarks,importXPage } from '../src/adapters/pull.mjs';
 import { ConnectorState } from '../src/core/connector-state.mjs';
+import { MemoService } from '../src/core/service.mjs';
 async function setup(t){const root=await fs.mkdtemp(path.join(os.tmpdir(),'neo-adapter-')),cache=`${root}-cache`;t.after(()=>Promise.all([fs.rm(root,{recursive:true,force:true}),fs.rm(cache,{recursive:true,force:true})]));const store=await initStore(root);store.checkpoints=new ConnectorState(cache);return store;}
 const slackMessage=(ts,text)=>({ts,text,user:'U12345'});
 test('Slack pages and replay deduplicate; channel cursor stored after capture',async t=>{
@@ -13,6 +14,11 @@ test('Slack pages and replay deduplicate; channel cursor stored after capture',a
  const api=async url=>{const p=new URL(url).searchParams;calls.push(p);return p.get('cursor')?{ok:true,messages:[slackMessage('1.000001','https://example.com/one 一つ目')],response_metadata:{}}:{ok:true,messages:[slackMessage('2.000001','https://example.com/two 二つ目')],has_more:true,response_metadata:{next_cursor:'next'}};};
  const r=await pullSlack(s,{token:'fake',channel:'C12345',api,delay:0});assert.equal(r.count,2);assert.equal(s.items.size,2);assert.equal((await s.checkpoints.read()).sources['slack:C12345'].high,'2.000001');
  const repeated=await pullSlack(s,{token:'fake',channel:'C12345',api,delay:0});assert.equal(repeated.count,0);
+});
+test('Slack X capture is saved first then enriched by oEmbed without duplicate capture',async t=>{
+ const s=await setup(t),api=async()=>({ok:true,messages:[slackMessage('9.000001','https://twitter.com/ada/status/777\nこの見せ方よさそう')],response_metadata:{}}),service=await new MemoService(s.root,{cachePath:`${s.root}-cache`,adapterOptions:{api,delay:0},xOEmbedTransport:async()=>({status:200,headers:{},buffer:Buffer.from(JSON.stringify({author_name:'Ada',html:'<blockquote><p>Official embed text</p></blockquote><script src="embed.js"></script>'}))})}).init();
+ await service.pull({slack:{channels:['C12345']}},{slack:'fake'},{only:'slack'});let items=await service.list();assert.equal(items.length,1);assert.equal(items[0].source.externalId,'777');assert.equal(items[0].source_text,'Official embed text');assert.equal(items[0].captures[0].note,'この見せ方よさそう');
+ await service.pull({slack:{channels:['C12345']}},{slack:'fake'},{only:'slack'});items=await service.list();assert.equal(items.length,1);assert.equal(items[0].captures.length,1);
 });
 test('Slack interrupted paging resumes without skipping the older page',async t=>{
  const s=await setup(t);let fail=true;

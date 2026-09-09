@@ -12,6 +12,7 @@ import { parseMetadata, robotsAllowed, enrichItem, aiAnnotate, fetchMetadata } f
 import { isPublicIP, requestBytes, apiJSON } from '../src/core/net.mjs';
 import { withFileLock } from '../src/core/util.mjs';
 import { ConnectorState } from '../src/core/connector-state.mjs';
+import { fetchXOEmbed, parseXOEmbed, enrichXItem, X_OEMBED_ENDPOINT } from '../src/enrichment/x-oembed.mjs';
 
 const exec = promisify(execFile);
 
@@ -19,6 +20,23 @@ async function store(t) {const root=await fs.mkdtemp(path.join(os.tmpdir(),'neo-
 const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jX1kAAAAASUVORK5CYII=','base64');
 test('X URLs collapse by post ID, including i/web/status',()=>{
  for(const u of ['https://x.com/name/status/123456789?s=20','https://twitter.com/other/status/123456789/photo/1','https://mobile.twitter.com/a/status/123456789','https://x.com/i/web/status/123456789'])assert.equal(normalizeURL(u).key,'x:123456789');
+});
+test('X oEmbed accepts x.com and twitter.com status URLs and rejects non-status URLs',async()=>{
+ const seen=[];const transport=async url=>{seen.push(new URL(url));return {status:200,headers:{},buffer:Buffer.from(JSON.stringify({author_name:'Ada',html:'<blockquote><p>Useful post</p></blockquote><script src="x"></script>'}))};};
+ for(const url of ['https://x.com/ada/status/12345','https://twitter.com/ada/status/12345']){const result=await fetchXOEmbed(url,{transport});assert.equal(result.externalId,'12345');assert.equal(result.sourceText,'Useful post');}
+ assert.ok(seen.every(url=>url.origin+url.pathname===X_OEMBED_ENDPOINT&&url.searchParams.get('omit_script')==='true'));
+ await assert.rejects(fetchXOEmbed('https://x.com/ada',{transport}),/status URL/);
+});
+test('X oEmbed extracts text and author without storing markup in user content',async()=>{
+ const parsed=parseXOEmbed({author_name:'Ada Lovelace',html:'<blockquote class="twitter-tweet"><p>Hello &amp; welcome<br>Line 2 <a href="https://t.co/x">link</a><script>bad()</script></p>&mdash; Ada</blockquote><script src="embed.js"></script>'});
+ assert.equal(parsed.sourceText,'Hello & welcome\nLine 2 link');assert.equal(parsed.creator,'Ada Lovelace');assert.ok(!/[<>]|bad\(\)/.test(parsed.sourceText));
+ const item={schema:2,id:'x-oembed-item',type:'x',title:'',content:'my canonical memo',source:{kind:'x',url:'https://x.com/ada/status/12345',externalId:'12345'},summary:'',tags:[],assets:[],createdAt:'2020-01-01T00:00:00.000Z',updatedAt:'2020-01-01T00:00:00.000Z',captures:[],ai_tags:[],archived:false,enrichment:{status:'pending',attempts:0}};
+ const enriched=await enrichXItem(item,{transport:async()=>({status:200,headers:{},buffer:Buffer.from(JSON.stringify({author_name:'Ada',html:'<blockquote><p>Source text</p></blockquote>'}))})});assert.equal(enriched.content,'my canonical memo');assert.equal(enriched.source.creator,'Ada');assert.equal(enriched.source_text,'Source text');assert.equal(enriched.description,'Source text');assert.equal(enriched.enrichment.adapter,'x-oembed');
+});
+test('X oEmbed failure preserves capture and can be retried later without paid API',async t=>{
+ const s=await store(t),calls=[];const service=await new MemoService(s.root,{xOEmbedTransport:async url=>{calls.push(url);throw new Error('offline');},adapterOptions:{api:async()=>{throw new Error('paid X API must not run');}}}).init();
+ const [saved]=await service.capture({input:'https://twitter.com/ada/status/555 この見せ方よさそう',source:'slack:C1',event_id:'m1'});let item=await service.enrich(saved.id);assert.equal(item.enrichment.status,'failed');assert.equal(item.captures[0].note,'この見せ方よさそう');assert.equal(item.content,'');assert.equal(calls.length,1);
+ service.options.xOEmbedTransport=async()=>({status:200,headers:{},buffer:Buffer.from(JSON.stringify({author_name:'Ada',html:'<blockquote><p>Later online</p></blockquote>'}))});const [retry]=await service.enrichPendingX();assert.equal(retry.status,'ready');item=await service.get(saved.id);assert.equal(item.source_text,'Later online');assert.equal(item.captures[0].note,'この見せ方よさそう');
 });
 test('Only known tracking parameters removed; semantic query and fragments retained',()=>{
  assert.equal(normalizeURL('https://example.com/a?utm_source=x&id=2&ref=method#part').url,'https://example.com/a?id=2&ref=method#part');

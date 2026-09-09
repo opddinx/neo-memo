@@ -74,7 +74,7 @@ node bin/neo-memo.mjs migrate store --store /path/to/existing-v1-store
 
 ## Optional connectors
 
-Slack、Discord、X API、Web metadata取得、LLMによる要約・タグ付けはすべて任意です。基本的なcapture/list/edit/searchに外部APIやAPI keyは不要です。設定方法は[Connector guide](docs/CONNECTORS.md)を参照してください。
+Slack、Discord、X API、Web metadata取得、LLMによる要約・タグ付けはすべて任意です。基本的なcapture/list/edit/searchに外部APIやAPI keyは不要です。X投稿URLの通常captureは、認証不要の公式oEmbedを使います。ブックマーク同期や詳細情報の取得だけが、明示操作によるX API利用です。設定方法は[Connector guide](docs/CONNECTORS.md)を参照してください。
 
 ## テスト
 

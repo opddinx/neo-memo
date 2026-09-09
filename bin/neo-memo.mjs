@@ -31,7 +31,9 @@ try {
       case 'add': {
         let input = args.join(' ');
         if (args.includes('--stdin')) { const chunks = []; for await (const chunk of process.stdin) chunks.push(chunk); input = Buffer.concat(chunks).toString('utf8'); }
-        result = await service.capture({ input, note, source: 'cli' }); break;
+        result = await service.capture({ input, note, source: 'cli' });
+        for (const saved of result) { const item = await service.get(saved.id); if (item.type === 'x') await service.enrich(saved.id); }
+        break;
       }
       case 'add-note': result = await service.addNote(args.join(' ')); break;
       case 'add-reading-note': result = await service.addReadingNote({ book, location, creator, content: args.join(' ') }); break;

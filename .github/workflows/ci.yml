@@ -29,7 +29,7 @@ jobs:
         run: node --test --test-name-pattern="Store|CLI|Item IDs|Asset identifiers|v1 data|Cache|App working directory|Symlinked" tests/core.test.mjs
       - name: Core behavior tests (Windows)
         if: runner.os == 'Windows'
-        run: node --test --test-name-pattern="X URLs|tracking|Slack formatting|Duplicate|Offline note|Markdown|Corrupt|Manual tags|Incomplete AI|Content-addressed|Metadata|robots|private IPs|429|Pure private" tests/core.test.mjs
+        run: node --test --test-name-pattern="X URLs|X oEmbed|tracking|Slack formatting|Duplicate|Offline note|Markdown|Corrupt|Manual tags|Incomplete AI|Content-addressed|Metadata|robots|private IPs|429|Pure private" tests/core.test.mjs
       - name: Writer lock test (Windows)
         if: runner.os == 'Windows'
         run: node --test --test-name-pattern="Writer lock" tests/core.test.mjs

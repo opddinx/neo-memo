@@ -105,8 +105,8 @@ const handlers = {
         ? [{ id: (await service.addNote(util.text(p.content))).id, status: 'created' }]
         : await service.capture({ input: util.text(p.input), note: util.text(p.note || ''), source: 'desktop' });
     changed();
-    for (const r of result) if (r.status === 'created' && (config.autoMetadata || config.autoAI)) {
-      (async()=>{if(config.autoMetadata)await service.enrich(r.id);await maybeAI(r.id);changed();})().catch(e=>{importWarnings=util.safeError(e);changed();});
+    for (const r of result) if (r.status === 'created') {
+      (async()=>{const it=await service.get(r.id);if(it.type==='x'||config.autoMetadata)await service.enrich(r.id);if(config.autoAI)await maybeAI(r.id);changed();})().catch(e=>{importWarnings=util.safeError(e);changed();});
     }
     return result;
   },

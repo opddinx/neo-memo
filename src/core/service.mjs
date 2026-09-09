@@ -9,6 +9,7 @@ import { withFileLock, safeError, assertNoSymlink } from './util.mjs';
 import { enrichItem, aiAnnotate } from './metadata.mjs';
 import { pullSlack, pullDiscord, pullXBookmarks, importXPage, lookupXPost } from '../adapters/pull.mjs';
 import { requestBytes } from './net.mjs';
+import { enrichXItem } from '../enrichment/x-oembed.mjs';
 
 export class MemoService {
   constructor(root, options = {}) {
@@ -62,6 +63,8 @@ export class MemoService {
         catch (e) { results.push({ source: `${kind}:${channel}`, error: safeError(e) }); }
       }
     }
+    const xItems = await this.enrichPendingX();
+    if (xItems.length) results.push({ source: 'x-oembed', count: xItems.filter(i => i.status === 'ready').length, items: xItems });
     return results;
   }
   pullX(config, secrets) {
@@ -69,9 +72,27 @@ export class MemoService {
   }
   async lookupX(id, secrets) { const initialItem = await this.get(id); return lookupXPost(this.store,id,{initialItem,token:secrets.x,...this.options.adapterOptions,transaction:callback=>this.mutate(callback,'enrich: X post (paid)')}); }
   importX(data) { return this.mutate(() => importXPage(this.store, data), 'import: X API JSON'); }
-  async enrich(id) { return enrichItem(this.store, id, { ...this.options, initialItem: await this.get(id), transaction: callback => this.mutate(callback, 'enrich: metadata') }); }
+  async enrich(id) {
+    const initialItem = await this.get(id);
+    if (initialItem.type !== 'x') return enrichItem(this.store, id, { ...this.options, initialItem, transaction: callback => this.mutate(callback, 'enrich: metadata') });
+    let enriched;
+    try { enriched = await enrichXItem(initialItem, { transport: this.options.xOEmbedTransport || this.options.fetcher || requestBytes }); }
+    catch (error) { enriched = structuredClone(initialItem); enriched.enrichment = { status: 'failed', adapter: 'x-oembed', attempts: (initialItem.enrichment?.attempts || 0) + 1, error: safeError(error), at: new Date().toISOString() }; }
+    return this.mutate(async () => {
+      const latest = this.store.get(id);
+      for (const field of ['source','source_text','description','enrichment']) if (field in enriched) latest[field] = enriched[field];
+      latest.updatedAt = latest.updated_at = new Date().toISOString();
+      return this.store.write(latest);
+    }, 'enrich: X oEmbed');
+  }
+  async enrichPendingX(limit = 20) {
+    const ids = (await this.list()).filter(i => !i.archived && i.type === 'x' && ['pending','failed'].includes(i.enrichment?.status)).slice(0, limit).map(i => i.id);
+    const results = [];
+    for (const id of ids) { const item = await this.enrich(id); results.push({ id, status: item.enrichment.status, error: item.enrichment.error || '' }); }
+    return results;
+  }
   async enrichPending(limit = 10) {
-    const ids = (await this.list()).filter(i => !i.archived && i.url && i.type !== 'x' && ['pending','failed'].includes(i.enrichment?.status)).slice(0, limit).map(i => i.id);
+    const ids = (await this.list()).filter(i => !i.archived && i.url && ['pending','failed'].includes(i.enrichment?.status)).slice(0, limit).map(i => i.id);
     const results = [];
     for (const id of ids) results.push(await this.enrich(id));
     return results.map(i => ({ id: i.id, status: i.enrichment.status, error: i.enrichment.error || '' }));
