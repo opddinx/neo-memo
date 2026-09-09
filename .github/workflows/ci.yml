@@ -21,8 +21,18 @@ jobs:
           node-version: 22
       - name: Syntax check
         run: node scripts/check.mjs
-      - name: Core, CLI, and Store tests
+      - name: Core, CLI, and Store tests (Linux)
+        if: runner.os != 'Windows'
         run: node --test tests/core.test.mjs
+      - name: Store boundary tests (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="Store|CLI|Item IDs|Asset identifiers|v1 data|Cache|App working directory|Symlinked" tests/core.test.mjs
+      - name: Core behavior tests (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="X URLs|tracking|Slack formatting|Duplicate|Offline note|Markdown|Corrupt|Manual tags|Incomplete AI|Content-addressed|Metadata|robots|private IPs|429|Pure private" tests/core.test.mjs
+      - name: Service concurrency tests (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="Local service|Writer lock|Capture stays|concurrent|X lookup" tests/core.test.mjs
       - name: Connector tests
         run: node --test tests/adapters.test.mjs
       - name: Git tests
