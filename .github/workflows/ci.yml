@@ -44,8 +44,18 @@ jobs:
         run: node --test --test-name-pattern="X lookup" tests/core.test.mjs
       - name: Connector tests
         run: node --test tests/adapters.test.mjs
-      - name: Git tests
+      - name: Git tests (Linux)
+        if: runner.os != 'Windows'
         run: node --test tests/git.test.mjs
+      - name: Git sync test (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="remote sync" tests/git.test.mjs
+      - name: Git divergence test (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="Diverged" tests/git.test.mjs
+      - name: Git staging boundary test (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="Foreign staged" tests/git.test.mjs
 
       # The symlink rejection test self-skips on Windows because creating a
       # symlink normally requires Developer Mode or elevated privileges.
