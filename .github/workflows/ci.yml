@@ -21,8 +21,10 @@ jobs:
           node-version: 22
       - name: Syntax check
         run: node scripts/check.mjs
-      - name: Core, CLI, Store, and connector tests
-        run: node --test tests/core.test.mjs tests/adapters.test.mjs
+      - name: Core, CLI, and Store tests
+        run: node --test tests/core.test.mjs
+      - name: Connector tests
+        run: node --test tests/adapters.test.mjs
       - name: Git tests
         run: node --test tests/git.test.mjs
 
