@@ -1,0 +1,3 @@
+https://example.com/sample-article 余白の使い方を覚えておきたい（架空のデモURL）
+https://example.com/sample-tool 実装方法の参考として保存（架空のデモURL）
+URLなしでも考えたことを保存できる。これは入力テスト用の文章。

@@ -1,0 +1,19 @@
+{
+  "name": "neo-memo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local-first, serverless link inbox. Markdown + Git, Slack/Discord pull, desktop UI and CLI.",
+  "type": "module",
+  "main": "src/desktop/main.cjs",
+  "bin": { "neo-memo": "bin/neo-memo.mjs" },
+  "engines": { "node": ">=22.0.0" },
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node scripts/check.mjs",
+    "demo": "node scripts/demo.mjs",
+    "cli": "node bin/neo-memo.mjs"
+  },
+  "devDependencies": { "electron": "44.2.0" },
+  "license": "MIT"
+}

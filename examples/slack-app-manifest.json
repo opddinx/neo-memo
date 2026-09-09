@@ -1,0 +1,12 @@
+{
+  "display_information": {
+    "name": "Neo Memo",
+    "description": "Read my capture channel when my local app connects."
+  },
+  "features": {
+    "bot_user": { "display_name": "neo-memo" }
+  },
+  "oauth_config": {
+    "scopes": { "bot": ["groups:history", "channels:history", "im:history"] }
+  }
+}

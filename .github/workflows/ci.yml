@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check
+        run: node scripts/check.mjs
+      - name: Core, CLI, Store, connector, and Git tests
+        run: node --test tests/*.test.mjs
+
+      # The symlink rejection test self-skips on Windows because creating a
+      # symlink normally requires Developer Mode or elevated privileges.
+      # All tests use local fixtures; no connector or LLM API keys are needed.
