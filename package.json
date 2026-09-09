@@ -15,5 +15,8 @@
     "cli": "node bin/neo-memo.mjs"
   },
   "devDependencies": { "electron": "44.2.0" },
-  "license": "MIT"
+  "license": "MIT",
+  "volta": {
+    "node": "22.16.0"
+  }
 }
