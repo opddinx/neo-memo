@@ -109,8 +109,8 @@ export async function importXPage(store, data, source = 'x-bookmarks:file') {
     const result = await store.capture({ input: `https://x.com/i/status/${post.id}`, source, event_id: post.id, hints: { title: content.slice(0,110), description: content, source_text: content, author: author ? `${author.name} (@${author.username})` : post.author_id || '', preview_url: firstMedia?.url || firstMedia?.preview_image_url || '' } });
     const it = store.get(result[0].id);
     // API enrichment can improve an earlier URL-only Slack capture without altering its notes.
-    if (content) { if (!it.manual_title) it.title = content.slice(0,110); it.source_text = content; it.description = content; }
-    if (author) it.author = `${author.name} (@${author.username})`;
+    if (content) { it.source = { ...(it.source || { kind:'x' }), title: content.slice(0,110) }; it.source_text = content; it.description = content; }
+    if (author) { it.author = `${author.name} (@${author.username})`; it.source = { ...(it.source || { kind:'x' }), creator: it.author }; }
     if (firstMedia) it.preview_url = firstMedia.url || firstMedia.preview_image_url || '';
     it.enrichment = { status: 'ready', at: now(), adapter: 'x-api' };
     await store.write(it);
@@ -129,12 +129,12 @@ export async function lookupXPost(store, id, { token, api = apiJSON, transaction
   if (!data.data?.id) throw new Error('X投稿を取得できませんでした。削除・非公開・権限を確認してください。');
   return transaction(async()=>{
     const it=store.get(id),post=data.data,content=post.note_tweet?.text || post.text || '';
-    if (content) { if(!it.manual_title)it.title=content.slice(0,110);it.source_text=content;it.description=content; }
+    if (content) { it.source={...(it.source||{kind:'x'}),title:content.slice(0,110)};it.source_text=content;it.description=content; }
     const author=data.includes?.users?.find(u=>u.id===post.author_id);
-    if(author)it.author=`${author.name} (@${author.username})`;
+    if(author){it.author=`${author.name} (@${author.username})`;it.source={...(it.source||{kind:'x'}),creator:it.author};}
     const media=data.includes?.media?.find(m=>m.media_key===post.attachments?.media_keys?.[0]);
     if(media)it.preview_url=media.url || media.preview_image_url || '';
-    it.enrichment={status:'ready',adapter:'x-api',at:now()};it.updated_at=now();
+    it.enrichment={status:'ready',adapter:'x-api',at:now()};it.updatedAt=it.updated_at=now();
     return store.write(it);
   });
 }

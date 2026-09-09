@@ -11,11 +11,11 @@ function opt(name, fallback = '') {
   if (!args[index + 1] || args[index + 1].startsWith('--')) throw new Error(`--${name} requires a path or value.`);
   const value = args[index + 1]; args.splice(index, 2); return value;
 }
-const HELP = `Neo Memo 1.0 — local-first capture and Store\n\nUsage:\n  neo-memo <command> --store <path> [options]\n\nStore commands:\n  init store                 initialize an empty Store folder\n  migrate store              migrate an existing v1 Store in place\n  status                     show Store and Git status\n\nCapture commands:\n  add <URL or text> [--note …]\n  add --stdin\n  search <query>\n  list\n  get <item-id>\n  note <item-id> <text>\n  pull slack|discord|x\n  import <file.txt|file.json>\n  enrich [item-id]\n  x-get <item-id>\n  ai <item-id> --model <name>\n  git-sync\n  export\n\nStore resolution: --store <path>, then NEO_MEMO_STORE. No Store is created implicitly.\n`;
+const HELP = `Neo Memo 1.0 — local-first capture and Store\n\nUsage:\n  neo-memo <command> --store <path> [options]\n\nStore commands:\n  init store                 initialize an empty Store folder\n  migrate store              migrate an existing v1 Store in place\n  status                     show Store and Git status\n\nCapture commands:\n  add <URL or text> [--note …]\n  add --stdin\n  add-note <text>\n  add-reading-note --book <title> [--location <locator>] [--creator <name>] <text>\n  search <query>\n  list\n  get <item-id>\n  note <item-id> <text>\n  pull slack|discord|x\n  import <file.txt|file.json>\n  enrich [item-id]\n  x-get <item-id>\n  ai <item-id> --model <name>\n  git-sync\n  export\n\nStore resolution: --store <path>, then NEO_MEMO_STORE. No Store is created implicitly.\n`;
 
 try {
   const store = opt('store', process.env.NEO_MEMO_STORE || '');
-  const note = opt('note'), channel = opt('channel'), userId = opt('user-id'), user = opt('user'), model = opt('model');
+  const note = opt('note'), book = opt('book'), location = opt('location'), creator = opt('creator'), channel = opt('channel'), userId = opt('user-id'), user = opt('user'), model = opt('model');
   const command = args.shift() || 'help', subcommand = args[0] || '';
   if (['help', '--help', '-h'].includes(command)) { console.log(HELP); process.exit(0); }
   if (!store) throw new Error('Neo Memo Store is not set. Pass --store <path> or set NEO_MEMO_STORE.');
@@ -33,10 +33,12 @@ try {
         if (args.includes('--stdin')) { const chunks = []; for await (const chunk of process.stdin) chunks.push(chunk); input = Buffer.concat(chunks).toString('utf8'); }
         result = await service.capture({ input, note, source: 'cli' }); break;
       }
+      case 'add-note': result = await service.addNote(args.join(' ')); break;
+      case 'add-reading-note': result = await service.addReadingNote({ book, location, creator, content: args.join(' ') }); break;
       case 'search': result = await service.list({ query: args.join(' ') }); break;
       case 'list': result = await service.list(); break;
       case 'get': result = await service.get(args[0]); break;
-      case 'note': { const item = await service.get(args.shift()); result = await service.update(item.id, { memo: [item.memo, args.join(' ')].filter(Boolean).join('\n\n') }); break; }
+      case 'note': { const item = await service.get(args.shift()); result = await service.update(item.id, { content: [item.content, args.join(' ')].filter(Boolean).join('\n\n') }); break; }
       case 'pull': {
         const kind = args[0];
         if (kind === 'x') result = await service.pullX({ x: { userId } }, secrets);

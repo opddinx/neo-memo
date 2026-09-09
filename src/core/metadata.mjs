@@ -76,11 +76,11 @@ export async function fetchMetadata(url, fetcher = requestBytes) {
   throw new Error('リダイレクトが多すぎます。');
 }
 export async function enrichItem(store, id, { fetcher = requestBytes, resizeImage, transaction = fn => fn(), initialItem } = {}) {
-  const it = initialItem ? structuredClone(initialItem) : store.get(id), originalTitle = it.title, originalPreview = it.preview;
+  const it = initialItem ? structuredClone(initialItem) : store.get(id), originalSourceTitle = it.source?.title, originalPreview = it.preview;
   if (!it.url || it.type === 'x') return it; // X uses an explicit paid API action, never accidental HTML scraping.
   try {
     const metadata = await fetchMetadata(it.url, fetcher);
-    if (metadata.title) it.title = metadata.title;
+    if (metadata.title) it.source = { ...(it.source || { kind: 'web' }), title: metadata.title };
     Object.assign(it, { description: metadata.description, author: metadata.author, preview_url: metadata.preview_url });
     if (metadata.preview_url) {
       try {
@@ -98,17 +98,18 @@ export async function enrichItem(store, id, { fetcher = requestBytes, resizeImag
     const latest = store.get(id);
     for (const field of ['description','author','preview_url','preview_error','enrichment']) { if (field in it) latest[field] = it[field]; }
     if (!latest.manual_preview && latest.preview === originalPreview) latest.preview = it.preview;
-    if (!latest.manual_title && latest.title === originalTitle) latest.title = it.title;
-    latest.updated_at = now();
+    if (latest.source?.title === originalSourceTitle) latest.source = it.source;
+    if (latest.preview && !(latest.assets || []).includes(latest.preview)) latest.assets = [...(latest.assets || []), latest.preview];
+    latest.updatedAt = latest.updated_at = now();
     return store.write(latest);
   });
 }
 export async function aiAnnotate(store, id, { key, model, includeNotes = false, api = apiJSON, transaction = fn => fn(), initialItem } = {}) {
   if (!key || !model) throw new Error('LLMのAPIキーとモデル名を設定してください。');
   const it = initialItem ? structuredClone(initialItem) : store.get(id);
-  if (it.type === 'memo' && !includeNotes) throw new Error('メモだけのカードをAIへ送るには、「自分のメモもモデルへ送る」を有効にしてください。');
-  const payload = { title: it.title, description: it.description, source_text: it.source_text || '' };
-  if (includeNotes) { payload.memo = it.memo; payload.capture_notes = it.captures.map(c => c.note); }
+  if (['note','reading_note'].includes(it.type) && !includeNotes) throw new Error('自分で書いたノートをAIへ送るには、「自分のメモもモデルへ送る」を有効にしてください。');
+  const payload = { item_title: it.title, source: it.source, description: it.description, source_text: it.source_text || '' };
+  if (includeNotes) { payload.content = it.content; payload.capture_notes = it.captures.map(c => c.note); }
   const data = await api('https://api.openai.com/v1/responses', {
     token: key, method: 'POST', body: {
       model, store: false, max_output_tokens: 800,
@@ -123,11 +124,11 @@ export async function aiAnnotate(store, id, { key, model, includeNotes = false, 
   if (typeof result.summary !== 'string' || !Array.isArray(result.tags)) throw new Error('LLM応答形式が不正です。');
   it.summary = result.summary.slice(0, 500);
   it.ai_tags = result.tags.filter(x => typeof x === 'string').slice(0, 5).map(x => x.slice(0,60));
-  it.summary_basis = it.type === 'memo' ? 'user_notes' : includeNotes ? 'metadata_and_notes' : it.source_text ? 'source_text' : 'metadata_only';
+  it.summary_basis = ['note','reading_note'].includes(it.type) ? 'user_notes' : includeNotes ? 'metadata_and_notes' : it.source_text ? 'source_text' : 'metadata_only';
   it.ai = { model, at: now(), notes_included: includeNotes, prompt_version: 1 };
   return transaction(async () => {
     const latest = store.get(id);
     for (const field of ['summary','ai_tags','summary_basis','ai']) latest[field] = it[field];
-    latest.updated_at = now(); return store.write(latest);
+    latest.updatedAt = latest.updated_at = now(); return store.write(latest);
   });
 }

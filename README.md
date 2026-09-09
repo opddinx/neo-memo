@@ -2,6 +2,8 @@
 
 Neo Memoは、URLと短いメモを素早く捕獲し、あとから一覧・編集・検索できる軽量な個人用メモアプリです。デスクトップGUIとCLIを備え、常設サーバーを必要としないlocal-first設計です。
 
+Quick Noteに加え、本のタイトルと任意の著者・ページ位置を添えたReading Noteを保存できます。ユーザー本文`content`、出典`source`、派生情報`summary`はStore上で明確に分離されます。
+
 アプリ本体とデータは完全に独立しています。アプリの配置場所からStoreの場所を推測せず、Storeは任意の絶対パスに置けます。個人データを含むStoreは、アプリとは別のprivate Git repositoryとして管理できます。Git remoteは任意で、remoteなしでも保存・閲覧・編集・検索・ローカルcommitが動作します。
 
 ## 必要環境
@@ -29,6 +31,8 @@ node bin/neo-memo.mjs init store --store /path/to/neo-memo-data
 ```sh
 node bin/neo-memo.mjs add "https://example.com" --store /path/to/neo-memo-data
 node bin/neo-memo.mjs search "graphics" --store /path/to/neo-memo-data
+node bin/neo-memo.mjs add-note "思いついた内容" --store /path/to/neo-memo-data
+node bin/neo-memo.mjs add-reading-note --book "The Design of Everyday Things" --location "p.142" "物理的制約そのものより..." --store /path/to/neo-memo-data
 ```
 
 環境変数も利用できます。`--store` が常に優先されます。

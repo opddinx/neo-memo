@@ -61,7 +61,7 @@ function changed() { if (win && !win.isDestroyed()) win.webContents.send('neo:ch
 async function maybeAI(id) {
   if (!config.autoAI || !config.ai?.model || !secrets.openai) return;
   const it = await service.get(id);
-  if (it.summary || (it.type === 'memo' && !config.ai.includeNotes) || (!it.description && !it.source_text && it.type !== 'memo')) return;
+  if (it.summary || (['note','reading_note'].includes(it.type) && !config.ai.includeNotes) || (!it.description && !it.source_text && !['note','reading_note'].includes(it.type))) return;
   await service.ai(id,config,secrets);
 }
 async function pullAll() {
@@ -99,7 +99,11 @@ const handlers = {
   get: p => service.get(p.id),
   status: async () => service ? ({...await service.status(),importWarnings}) : { root: config.root, count: 0, gitWarning: startupError },
   capture: async p => {
-    const result = await service.capture({ input: util.text(p.input), note: util.text(p.note || ''), source: 'desktop' });
+    const result = p.kind === 'reading_note'
+      ? [{ id: (await service.addReadingNote({ book: util.text(p.book), creator: util.text(p.creator || ''), location: util.text(p.location || ''), content: util.text(p.content) })).id, status: 'created' }]
+      : p.kind === 'note'
+        ? [{ id: (await service.addNote(util.text(p.content))).id, status: 'created' }]
+        : await service.capture({ input: util.text(p.input), note: util.text(p.note || ''), source: 'desktop' });
     changed();
     for (const r of result) if (r.status === 'created' && (config.autoMetadata || config.autoAI)) {
       (async()=>{if(config.autoMetadata)await service.enrich(r.id);await maybeAI(r.id);changed();})().catch(e=>{importWarnings=util.safeError(e);changed();});

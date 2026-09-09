@@ -47,6 +47,8 @@ export class MemoService {
   async list(filters = {}) { const reader = new Store(this.root); await reader.reload(); return reader.list(filters); }
   async get(id) { const reader = new Store(this.root); await reader.reload(); return reader.get(id); }
   capture(args) { return this.mutate(() => this.store.capture(args), 'capture: add to inbox'); }
+  addNote(content) { return this.mutate(() => this.store.createNote(content), 'capture: add quick note'); }
+  addReadingNote(args) { return this.mutate(() => this.store.createReadingNote(args), 'capture: add reading note'); }
   update(id, patch) { return this.mutate(() => this.store.update(id, patch), 'memo: edit card'); }
   async status() { return { root: this.root, cacheRoot: this.cacheRoot, count: (await this.list()).length, gitWarning: this.gitWarning, git: await this.git.status().catch(e => ({ error: safeError(e) })), sources: (await this.connectorState.read()).sources }; }
   async pull(config, secrets, { only = '' } = {}) {
@@ -84,7 +86,7 @@ export class MemoService {
     return `data:${mime};base64,${bytes.toString('base64')}`;
   }
   async saveLocalImage(id, bytes) {
-    return this.mutate(async () => { const it = this.store.get(id); const image = this.options.resizeImage ? await this.options.resizeImage(bytes) : bytes; it.preview = await this.store.saveAsset(image); it.manual_preview = true; return this.store.write(it); }, 'memo: attach preview');
+    return this.mutate(async () => { const it = this.store.get(id); const image = this.options.resizeImage ? await this.options.resizeImage(bytes) : bytes; it.preview = await this.store.saveAsset(image); it.assets = [...new Set([...(it.assets || []),it.preview])]; it.manual_preview = true; return this.store.write(it); }, 'memo: attach preview');
   }
   async fetchXImage(id) {
     const initial = await this.get(id);
@@ -95,9 +97,9 @@ export class MemoService {
     return this.mutate(async () => {
       const it = this.store.get(id);
       if (it.preview !== initial.preview || it.manual_preview !== initial.manual_preview) return it;
-      it.preview = await this.store.saveAsset(bytes); return this.store.write(it);
+      it.preview = await this.store.saveAsset(bytes); it.assets = [...new Set([...(it.assets || []),it.preview])]; return this.store.write(it);
     }, 'enrich: X preview');
   }
   syncGit() { return this.mutate(async () => { const r = await this.git.sync(); await this.store.reload(); return r; }, 'memo: before remote sync'); }
-  async exportJSON() { return { schema: 1, items: [...await this.list(), ...await this.list({archived:true})] }; }
+  async exportJSON() { return { schema: 2, items: [...await this.list(), ...await this.list({archived:true})] }; }
 }

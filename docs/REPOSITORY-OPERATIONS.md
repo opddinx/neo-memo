@@ -38,7 +38,7 @@ neo-memo-data/
 ```json
 {
   "format": "neo-memo-store",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "storeId": "persistent UUID"
 }
 ```
@@ -54,6 +54,34 @@ this Item ID, not by its filename convention, URL, or App-relative path.
 Assets are content addressed. An item exposes an asset identifier such as
 `sha256:<hash>`; only the Store access layer resolves it to `assets/…`. Consumers
 must not make a physical asset path part of their external contract.
+
+Schema v2 separates user-authored content from derived and source information:
+
+```json
+{
+  "id": "01K…",
+  "type": "reading_note",
+  "title": "optional title of this memo",
+  "content": "the user's canonical text",
+  "source": {
+    "kind": "book",
+    "title": "The Design of Everyday Things",
+    "creator": "Don Norman",
+    "locator": "p.142"
+  },
+  "summary": "optional derived information",
+  "tags": [],
+  "assets": ["sha256:<hash>"],
+  "createdAt": "ISO-8601 timestamp",
+  "updatedAt": "ISO-8601 timestamp",
+  "captures": []
+}
+```
+
+Allowed item types are `note`, `reading_note`, `web`, `x`, and `other`.
+Allowed source kinds are `book`, `web`, `x`, `paper`, `video`, and `other`.
+A `reading_note` requires `source.kind=book` and a non-empty `source.title`;
+`source.creator`, `source.locator`, and the item's own `title` are optional.
 
 The Store layer is exposed from `src/store/` and owns opening, validation,
 initialization, migration, item operations, duplicate lookup, and asset
@@ -85,7 +113,11 @@ To convert an existing v1 Store in place without deleting `items/` or `assets/`:
 neo-memo migrate store --store D:/data/neo-memo-data
 ```
 
-Migration adds `neo-memo-store.json`, preserves existing Item IDs and assets,
+Migration creates or upgrades `neo-memo-store.json` to schema v2, preserves the
+existing `storeId` when present, and preserves existing Item IDs and assets.
+Legacy user memo bodies become `content`; source URL/title/creator/external ID
+become structured `source` fields while compatibility metadata is retained.
+It also
 rewrites legacy `assets/<prefix>/<hash>.<ext>` references to `sha256:<hash>`, and
 moves connector checkpoints from legacy `state/sources.json` to local cache state.
 It never moves the Store relative to the App and never adds ideation fields.

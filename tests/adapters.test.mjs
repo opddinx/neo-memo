@@ -49,7 +49,7 @@ test('Discord scans backwards across 100-message page without skipping older ent
 test('X JSON import enriches Slack capture while preserving human notes',async t=>{
  const s=await setup(t);await s.capture({input:'https://x.com/a/status/12345',note:'my reason'});
  await importXPage(s,{data:[{id:'12345',text:'Some post',author_id:'10'}],includes:{users:[{id:'10',name:'Test',username:'test'}]}});
- assert.equal(s.items.size,1);const it=[...s.items.values()][0];assert.equal(it.title,'Some post');assert.equal(it.captures[0].note,'my reason');assert.equal(it.author,'Test (@test)');
+ assert.equal(s.items.size,1);const it=[...s.items.values()][0];assert.equal(it.source.title,'Some post');assert.equal(it.captures[0].note,'my reason');assert.equal(it.author,'Test (@test)');
 });
 test('X cost-bounded pagination checkpoints exactly one page',async t=>{
  const s=await setup(t);let calls=0;

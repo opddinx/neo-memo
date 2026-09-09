@@ -38,20 +38,33 @@ test('Duplicate card accumulates provenance; replay is idempotent',async t=>{
 });
 test('Offline note without URL and Japanese search survive reload',async t=>{
  const s=await store(t);const [r]=await s.capture({input:'水面を照らす色について考える',source:'cli'});
- await s.update(r.id,{memo:'触覚にも応用できるか。',tags:['光学']});await s.reload();
+ await s.update(r.id,{content:'触覚にも応用できるか。',tags:['光学']});await s.reload();
  assert.equal(s.list({query:'水面 触覚'})[0].id,r.id);assert.equal(s.list({query:'光学'}).length,1);
 });
+test('Quick Note stores URL-free user text as canonical content',async t=>{
+ const s=await store(t),item=await s.createNote('思いついた内容');assert.equal(item.type,'note');assert.equal(item.content,'思いついた内容');assert.equal(item.source,undefined);assert.equal(s.get(item.id).content,'思いついた内容');
+});
+test('Reading Note requires a book and accepts optional/free-form locator',async t=>{
+ const s=await store(t);await assert.rejects(s.createReadingNote({content:'memo'}),/book/i);
+ const without=await s.createReadingNote({book:'The Design of Everyday Things',content:'制約について'});assert.equal(without.source.locator,undefined);
+ const withLocator=await s.createReadingNote({book:'The Design of Everyday Things',creator:'Don Norman',location:'Kindle 1832 / §4.2',content:'物理的制約そのものより...'});
+ assert.equal(withLocator.source.kind,'book');assert.equal(withLocator.source.locator,'Kindle 1832 / §4.2');assert.equal(withLocator.title,'');
+});
+test('Book title search returns multiple notes from the same book',async t=>{
+ const s=await store(t);await s.createReadingNote({book:'Designing Interfaces',location:'p.10',content:'one'});await s.createReadingNote({book:'Designing Interfaces',content:'two'});await s.createReadingNote({book:'Other Book',content:'three'});
+ const found=s.list({query:'Designing Interfaces'});assert.equal(found.length,2);assert.ok(found.every(item=>item.source.title==='Designing Interfaces'));
+});
 test('Markdown round trip preserves arbitrary body including YAML-like separators',async t=>{
- const s=await store(t);const [r]=await s.capture({input:'hello'});const it=s.get(r.id);it.memo='## Notes\n\n---\nnot metadata\n<script>alert(1)</script>';
+ const s=await store(t);const [r]=await s.capture({input:'hello'});const it=s.get(r.id);it.content='## Notes\n\n---\nnot metadata\n<script>alert(1)</script>';
  assert.deepEqual(decodeItem(encodeItem(it)),it);
 });
 test('Corrupt metadata is not silently discarded',()=>{assert.throws(()=>decodeItem('---\n{bad\n---\nbody'));});
 test('Manual tags and notes survive AI re-annotation',async t=>{
  const s=await store(t);const [r]=await s.capture({input:'https://example.com',note:'private reason'});
- await s.update(r.id,{memo:'secret draft',tags:['必読']});let request;
+ await s.update(r.id,{content:'secret draft',tags:['必読']});let request;
  const api=async(_url,o)=>{request=o.body;return {status:'completed',output:[{content:[{type:'output_text',text:'{"summary":"説明は短い。","tags":["形状"]}'}]}]};};
  await aiAnnotate(s,r.id,{key:'fake',model:'test-model',api});
- const it=s.get(r.id);assert.deepEqual(it.tags,['必読']);assert.equal(it.memo,'secret draft');assert.deepEqual(it.ai_tags,['形状']);assert.equal(request.store,false);assert.ok(!request.input.includes('secret draft'));assert.ok(!request.input.includes('private reason'));
+ const it=s.get(r.id);assert.deepEqual(it.tags,['必読']);assert.equal(it.content,'secret draft');assert.deepEqual(it.ai_tags,['形状']);assert.equal(request.store,false);assert.ok(!request.input.includes('secret draft'));assert.ok(!request.input.includes('private reason'));
 });
 test('Incomplete AI response leaves stored content unchanged',async t=>{
  const s=await store(t);const [r]=await s.capture({input:'https://incomplete-ai.example/a'});await assert.rejects(aiAnnotate(s,r.id,{key:'fake',model:'m',api:async()=>({status:'incomplete',output:[]})}));assert.equal(s.get(r.id).summary,'');
@@ -61,7 +74,7 @@ test('Content-addressed image store deduplicates and rejects SVG',async t=>{
 });
 test('Store can be initialized at any absolute path and validates its schema',async t=>{
  const parent=await fs.mkdtemp(path.join(os.tmpdir(),'anywhere-'));const root=path.join(parent,'unrelated','data-store');t.after(()=>fs.rm(parent,{recursive:true,force:true}));
- const s=await initStore(root), meta=await validateStore(root);assert.equal(s.root,path.resolve(root));assert.equal(meta.format,'neo-memo-store');assert.equal(meta.schemaVersion,1);assert.match(meta.storeId,/^[0-9a-f-]{36}$/i);
+ const s=await initStore(root), meta=await validateStore(root);assert.equal(s.root,path.resolve(root));assert.equal(meta.format,'neo-memo-store');assert.equal(meta.schemaVersion,2);assert.match(meta.storeId,/^[0-9a-f-]{36}$/i);
  await fs.writeFile(path.join(root,'neo-memo-store.json'),JSON.stringify({...meta,schemaVersion:999}));await assert.rejects(validateStore(root),/Unsupported/);
 });
 test('Store rejects missing or invalid marker instead of creating data implicitly',async t=>{
@@ -76,6 +89,12 @@ test('CLI --store takes priority over NEO_MEMO_STORE and missing Store is explic
  const {stdout}=await exec(process.execPath,[cli,'status','--store',selected],{env:{...process.env,NEO_MEMO_STORE:envStore}});assert.equal(JSON.parse(stdout).root,path.resolve(selected));await assert.rejects(fs.access(envStore));
  await assert.rejects(exec(process.execPath,[cli,'list'],{env:{...process.env,NEO_MEMO_STORE:''}}),/Store is not set/);
 });
+test('CLI add-note and add-reading-note write the generalized model',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'cli-notes-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const cli=path.resolve('bin/neo-memo.mjs');await exec(process.execPath,[cli,'init','store','--store',root]);
+ const quick=JSON.parse((await exec(process.execPath,[cli,'add-note','思いついた内容','--store',root])).stdout);assert.equal(quick.type,'note');assert.equal(quick.content,'思いついた内容');
+ await assert.rejects(exec(process.execPath,[cli,'add-reading-note','memo','--store',root]),/book/i);
+ const reading=JSON.parse((await exec(process.execPath,[cli,'add-reading-note','--book','The Design of Everyday Things','--location','pp.142-145','--creator','Don Norman','物理的制約','--store',root])).stdout);assert.equal(reading.source.title,'The Design of Everyday Things');assert.equal(reading.source.locator,'pp.142-145');assert.equal(reading.content,'物理的制約');
+});
 test('Item IDs are URL-independent and remain immutable after edits',async t=>{
  const s=await store(t);const [created]=await s.capture({input:'https://example.com/immutable'});const before=s.get(created.id);
  assert.match(before.id,/^[0-9A-HJKMNP-TV-Z]{26}$/);await s.update(before.id,{title:'Changed title',memo:'Changed memo'});assert.equal(s.get(before.id).id,before.id);
@@ -87,9 +106,13 @@ test('Asset identifiers resolve without exposing a Store-relative path',async t=
 test('v1 data migrates in place while preserving items, IDs, and assets',async t=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'legacy-store-')),cache=`${root}-cache`;t.after(()=>Promise.all([fs.rm(root,{recursive:true,force:true}),fs.rm(cache,{recursive:true,force:true})]));
  await fs.mkdir(path.join(root,'items'),{recursive:true});await fs.mkdir(path.join(root,'assets','aa'),{recursive:true});await fs.mkdir(path.join(root,'state'),{recursive:true});
- const legacyId='legacy-item-0001', digest='a'.repeat(64), legacy={schema:1,id:legacyId,key:'url:https://example.com',url:'https://example.com',original_url:'https://example.com',type:'web',title:'Legacy',description:'',summary:'',summary_basis:'',author:'',saved_at:'2020-01-01T00:00:00.000Z',updated_at:'2020-01-01T00:00:00.000Z',tags:[],ai_tags:[],captures:[],preview:`assets/aa/${digest}.png`,preview_url:'',archived:false,enrichment:{status:'ready',attempts:0},memo:''};
+ const legacyId='legacy-item-0001', digest='a'.repeat(64), legacy={schema:1,id:legacyId,key:'url:https://example.com',url:'https://example.com',original_url:'https://example.com',external_id:'article-42',type:'web',title:'Legacy',description:'',summary:'',summary_basis:'',author:'Author',saved_at:'2020-01-01T00:00:00.000Z',updated_at:'2020-01-02T00:00:00.000Z',tags:['kept'],ai_tags:[],captures:[{source:'slack:C1',event_id:'e1',at:'2020-01-01T00:00:00.000Z',note:'why',source_url:''}],preview:`assets/aa/${digest}.png`,preview_url:'',archived:false,enrichment:{status:'ready',attempts:0},memo:'user memo'};
  const legacyCheckpoint={schema:1,sources:{'slack:C12345':{high:'42.0'}}};await fs.writeFile(path.join(root,'neo-memo.json'),JSON.stringify({schema:1}));await fs.writeFile(path.join(root,'state','sources.json'),JSON.stringify(legacyCheckpoint));await fs.writeFile(path.join(root,'items',`${legacyId}.md`),encodeItem(legacy));await fs.writeFile(path.join(root,'assets','aa',`${digest}.png`),PNG);
- const checkpoints=new ConnectorState(cache),s=await migrateV1Store(root,{checkpoints});assert.equal(s.get(legacyId).id,legacyId);assert.equal(s.get(legacyId).preview,`sha256:${digest}`);assert.equal(await s.resolveAsset(`sha256:${digest}`),path.join(root,'assets','aa',`${digest}.png`));assert.deepEqual(await checkpoints.read(),legacyCheckpoint);await assert.rejects(fs.access(path.join(root,'state')));
+ const checkpoints=new ConnectorState(cache),s=await migrateV1Store(root,{checkpoints}),item=s.get(legacyId);assert.equal(item.id,legacyId);assert.equal(item.content,'user memo');assert.equal(item.source.url,'https://example.com');assert.equal(item.source.externalId,'article-42');assert.equal(item.source.creator,'Author');assert.equal(item.createdAt,'2020-01-01T00:00:00.000Z');assert.equal(item.updatedAt,'2020-01-02T00:00:00.000Z');assert.equal(item.captures[0].note,'why');assert.deepEqual(item.tags,['kept']);assert.deepEqual(item.assets,[`sha256:${digest}`]);assert.equal(item.preview,`sha256:${digest}`);assert.equal(await s.resolveAsset(`sha256:${digest}`),path.join(root,'assets','aa',`${digest}.png`));assert.deepEqual(await checkpoints.read(),legacyCheckpoint);await assert.rejects(fs.access(path.join(root,'state')));
+});
+test('schema v1 marker migrates explicitly without changing storeId or item ID',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'marker-v1-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));await fs.mkdir(path.join(root,'items'),{recursive:true});await fs.mkdir(path.join(root,'assets'));const storeId='11111111-1111-4111-8111-111111111111',id='legacy-marker-item';await fs.writeFile(path.join(root,'neo-memo-store.json'),JSON.stringify({format:'neo-memo-store',schemaVersion:1,storeId}));await fs.writeFile(path.join(root,'items',`${id}.md`),encodeItem({schema:1,id,key:'note:old',url:'',original_url:'',type:'memo',title:'old',saved_at:'2020-01-01T00:00:00.000Z',updated_at:'2020-01-01T00:00:00.000Z',tags:[],ai_tags:[],captures:[{source:'cli',event_id:'1',at:'2020-01-01T00:00:00.000Z',note:'original',source_url:''}],memo:'edited',preview:'',archived:false}));
+ await assert.rejects(new Store(root).init(),/Unsupported/);const s=await migrateV1Store(root);assert.equal((await validateStore(root)).storeId,storeId);assert.equal(s.get(id).id,id);assert.equal(s.get(id).content,'edited');
 });
 test('Metadata parser is passive, decodes attributes, resolves image and ignores scripts',()=>{
  const r=parseMetadata('<head><script>"<meta property=\"og:title\" content=\"evil\">"</script><title>Fallback</title><meta property="og:title" content="A &amp; B"><meta name=description content="line &#x65e5;"><meta property="og:image" content="/a.png"></head>','https://example.com/p');
@@ -157,14 +180,14 @@ test('Metadata response cannot overwrite concurrent human edits',async t=>{
  const signal=new Promise(r=>started=r),waiting=new Promise(r=>release=r);
  const fetcher=async(url)=>{if(url.endsWith('robots.txt'))return {status:200,headers:{},buffer:Buffer.from('User-agent: *\nAllow: /')};started();await waiting;return {status:200,headers:{'content-type':'text/html'},url,buffer:Buffer.from('<title>Original page title</title><meta name="description" content="remote description">')};};
  const service=await new MemoService(s.root,{fetcher}).init();const [r]=await service.capture({input:'https://concurrent-metadata.example/a'});
- const pending=service.enrich(r.id);await signal;await service.update(r.id,{title:'自分で付けた題',memo:'編集中の文章',tags:['自分のタグ']});release();await pending;
- const it=await service.get(r.id);assert.equal(it.title,'自分で付けた題');assert.equal(it.memo,'編集中の文章');assert.deepEqual(it.tags,['自分のタグ']);assert.equal(it.description,'remote description');
+ const pending=service.enrich(r.id);await signal;await service.update(r.id,{title:'自分で付けた題',content:'編集中の文章',tags:['自分のタグ']});release();await pending;
+ const it=await service.get(r.id);assert.equal(it.title,'自分で付けた題');assert.equal(it.content,'編集中の文章');assert.deepEqual(it.tags,['自分のタグ']);assert.equal(it.description,'remote description');
 });
 test('AI response cannot overwrite concurrent memo or manual tags',async t=>{
  const s=await store(t);let release,started;
  const signal=new Promise(r=>started=r),waiting=new Promise(r=>release=r);
  const service=await new MemoService(s.root,{aiOptions:{api:async()=>{started();await waiting;return {status:'completed',output:[{content:[{type:'output_text',text:'{"summary":"summary","tags":["AI tag"]}'}]}]};}}}).init();
- const [r]=await service.capture({input:'https://ai-concurrent.example/test'});const pending=service.ai(r.id,{ai:{model:'fake'}},{openai:'fake'});await signal;await service.update(r.id,{memo:'new memo',tags:['human']});release();await pending;const it=await service.get(r.id);assert.equal(it.memo,'new memo');assert.deepEqual(it.tags,['human']);assert.deepEqual(it.ai_tags,['AI tag']);
+ const [r]=await service.capture({input:'https://ai-concurrent.example/test'});const pending=service.ai(r.id,{ai:{model:'fake'}},{openai:'fake'});await signal;await service.update(r.id,{content:'new memo',tags:['human']});release();await pending;const it=await service.get(r.id);assert.equal(it.content,'new memo');assert.deepEqual(it.tags,['human']);assert.deepEqual(it.ai_tags,['AI tag']);
 });
 test('Pure private memo cannot be sent to AI without explicit notes consent',async t=>{
  const s=await store(t);const [r]=await s.capture({input:'private local thought'});let called=false;

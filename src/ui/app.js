@@ -7,8 +7,8 @@ function toast(message, error = false) { $('toast').textContent = message; $('to
 async function call(method,payload = {}) { if (!window.neo) throw new Error('デスクトップ版から開いてください。npm start で起動します。'); return window.neo.call(method,payload); }
 async function action(fn) { try { return await fn(); } catch(e) { toast(e.message || String(e),true); return null; } }
 function date(s) { try { return new Date(s).toLocaleDateString('ja-JP',{month:'2-digit',day:'2-digit'}); } catch { return ''; } }
-function sourceLabel(type) { return ({memo:'MEMO',web:'WEB',note:'NOTE',x:'X',github:'GITHUB',youtube:'YOUTUBE'})[type] || type.toUpperCase(); }
-function kindName(type) { return ({memo:'メモ',web:'Web',note:'note',x:'X',github:'GitHub',youtube:'YouTube'})[type] || 'すべてのストック'; }
+function sourceLabel(type) { return ({web:'WEB',note:'NOTE',reading_note:'READING',x:'X',other:'OTHER'})[type] || type.toUpperCase(); }
+function kindName(type) { return ({web:'Web',note:'Quick Note',reading_note:'Reading Note',x:'X',other:'その他'})[type] || 'すべてのストック'; }
 function domain(it) { try { return new URL(it.original_url || it.url).hostname.replace(/^www\./,''); } catch { return 'just a thought'; } }
 const imageObserver = new IntersectionObserver(entries=>{
   for (const e of entries) if (e.isIntersecting) {
@@ -29,16 +29,17 @@ function renderCards() {
     card.addEventListener('click',()=>action(()=>openDetail(it.id)));
     card.addEventListener('keydown',e=>{if(e.key==='Enter') action(()=>openDetail(it.id));});
     if(it.preview) { const img=element('img','card-image'); img.alt='保存したプレビュー'; img.dataset.id=it.id; card.append(img); imageObserver.observe(img); }
-    else { const ph=element('div',`card-placeholder ${it.type}`); ph.append(element('span','source-initial',({memo:'“',note:'n.',x:'𝕏',github:'{ }',youtube:'▷'})[it.type] || '↗'),element('span','source-domain',domain(it))); card.append(ph); }
+    else { const ph=element('div',`card-placeholder ${it.type}`); ph.append(element('span','source-initial',({note:'“',reading_note:'§',x:'𝕏'})[it.type] || '↗'),element('span','source-domain',it.type==='reading_note' ? 'book note' : domain(it))); card.append(ph); }
     const body=element('div','card-body'), meta=element('div','card-meta');
-    meta.append(element('span','source-badge',sourceLabel(it.type)),element('span','',domain(it)),element('time','',date(it.saved_at)));
-    body.append(meta,element('h2','',it.title));
-    const desc=it.summary || it.description || (it.type==='memo' ? it.memo : 'URLとメモを保存済み。情報はあとから補完できます。');
+    meta.append(element('span','source-badge',sourceLabel(it.type)),element('span','',it.source?.locator || domain(it)),element('time','',date(it.createdAt || it.saved_at)));
+    body.append(meta,element('h2','',it.source?.title || it.title || (it.content || '').slice(0,90)));
+    if(it.type==='reading_note' && it.title) body.append(element('p','card-description',it.title));
+    const desc=it.content || it.summary || it.description || 'URLとメモを保存済み。情報はあとから補完できます。';
     if(desc) body.append(element('p','card-description',desc));
     const tags=element('div','tags');
     for(const tag of [...new Set([...it.tags,...(it.ai_tags||[])])].slice(0,4)) tags.append(element('span','tag',`# ${tag}`));
     if(tags.childElementCount) body.append(tags);
-    const reason=it.captures.filter(c=>c.note).at(-1)?.note || it.memo;
+    const reason=it.captures.filter(c=>c.note).at(-1)?.note;
     if(reason) { const r=element('div','reason');r.append(element('strong','', 'WHY'),element('span','',reason));body.append(r); }
     const tail=element('div','card-tail');
     tail.append(element('span','',it.captures[0]?.source.split(':')[0] || 'local'),element('span',it.enrichment?.status==='ready' ? '' : 'pending',it.enrichment?.status==='ready' ? 'saved locally' : it.type==='x' ? 'URLを保存済み' : '補完待ち'));
@@ -55,18 +56,19 @@ async function refresh() {
   for(const t of tags) {const b=element('button','',`# ${t}`);b.onclick=()=>{state.tag=state.tag===t?'':t;action(refresh);};$('tagList').append(b);}
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>action(refresh),130);}
-function openCapture(){ $('captureDialog').showModal();setTimeout(()=>$('captureInput').focus(),50); }
+function updateCaptureKind(){const kind=$('captureKind').value,reading=kind==='reading_note';$('readingFields').classList.toggle('hidden',!reading);$('captureNoteFields').classList.toggle('hidden',kind!=='capture');$('captureInputLabel').textContent=reading?'Memo *':kind==='note'?'Memo *':'URL';$('captureInput').placeholder=reading?'本から得た気づきや自分の考え':kind==='note'?'思いついた内容':'https://…';}
+function openCapture(){ const books=[...new Set(state.items.filter(i=>i.type==='reading_note').map(i=>i.source?.title).filter(Boolean))];$('recentBooks').replaceChildren(...books.slice(0,20).map(x=>{const o=document.createElement('option');o.value=x;return o;}));updateCaptureKind();$('captureDialog').showModal();setTimeout(()=>$('captureInput').focus(),50); }
 async function saveCapture(){
   if(state.savingCapture)return;
-  const input=$('captureInput').value,note=$('captureNote').value;if(!input.trim())return;
+  const input=$('captureInput').value,note=$('captureNote').value,kind=$('captureKind').value;if(!input.trim())return;if(kind==='reading_note'&&!$('captureBook').value.trim())throw new Error('Bookは必須です。');
   state.savingCapture=true;const button=$('captureForm').querySelector('button[type=submit]');button.disabled=true;
-  try{const results=await call('capture',{input,note});$('captureInput').value='';$('captureNote').value='';$('captureDialog').close();const added=results.filter(r=>r.status==='created').length;toast(added?`${added}件をローカル保存しました。`:'保存済みのカードにメモを追記しました。');await refresh();}
+  try{const results=await call('capture',{kind,input,note,content:input,book:$('captureBook').value,creator:$('captureCreator').value,location:$('captureLocation').value});$('captureInput').value='';$('captureNote').value='';$('captureBook').value='';$('captureCreator').value='';$('captureLocation').value='';$('captureDialog').close();const added=results.filter(r=>r.status==='created').length;toast(added?`${added}件をローカル保存しました。`:'保存済みのカードにメモを追記しました。');await refresh();}
   finally{state.savingCapture=false;button.disabled=false;}
 }
 async function openDetail(id){
   const it=await call('get',{id});state.current=it;state.detailDirty=false;
-  $('detailType').textContent=sourceLabel(it.type);$('detailMeta').textContent=`${domain(it)} · ${new Date(it.saved_at).toLocaleString('ja-JP')} · ${it.author || ''}`;
-  $('detailTitle').value=it.title;$('detailMemo').value=it.memo || '';$('detailTags').value=it.tags.join(', ');
+  $('detailType').textContent=sourceLabel(it.type);$('detailMeta').textContent=`${it.source?.title || domain(it)}${it.source?.locator ? ` · ${it.source.locator}` : ''} · ${new Date(it.createdAt || it.saved_at).toLocaleString('ja-JP')} · ${it.source?.creator || it.author || ''}`;
+  $('detailTitle').value=it.title || '';$('detailMemo').value=it.content || '';$('detailTags').value=it.tags.join(', ');
   $('originalButton').classList.toggle('hidden',!it.url);
   $('detailSummary').textContent=it.summary || it.description || '説明はまだありません。自分のメモだけでも保存・検索できます。';
   $('summaryLabel').textContent=it.summary ? ({metadata_only:'AI説明（メタデータのみから生成）',source_text:'AI要約（取得済み投稿本文から生成）',metadata_and_notes:'AI整理（ページ情報＋自分のメモ）',user_notes:'AI整理（自分のメモ）'}[it.summary_basis] || 'AI説明') : 'ページ／投稿の説明';
@@ -76,11 +78,11 @@ async function openDetail(id){
   $('detailAITags').replaceChildren();for(const tag of it.ai_tags || []) $('detailAITags').append(element('span','tag ai-tag',`AI · ${tag}`));
   $('detailSaveStatus').textContent='変更は「保存」で確定';$('archiveButton').textContent=it.archived?'一覧に戻す':'アーカイブ';
   $('detailX').classList.toggle('hidden',it.type!=='x');
-  $('detailEnrich').textContent=it.type==='x' ? '取得済み画像を保存' : '情報を補完';$('detailEnrich').disabled=it.type==='memo' || it.type==='x' && !it.preview_url;
+  $('detailEnrich').textContent=it.type==='x' ? '取得済み画像を保存' : '情報を補完';$('detailEnrich').disabled=['note','reading_note'].includes(it.type) || it.type==='x' && !it.preview_url;
   $('detailImage').classList.add('hidden');if(it.preview){const img=await call('asset',{id});if(img){$('detailImage').src=img;$('detailImage').classList.remove('hidden');}}
   if(!$('detailDialog').open)$('detailDialog').showModal();
 }
-async function saveDetail(){if(!state.current)return;const it=await call('update',{id:state.current.id,patch:{title:$('detailTitle').value,memo:$('detailMemo').value,tags:$('detailTags').value.split(/[,，]/).map(x=>x.trim()).filter(Boolean)}});state.current=it;state.detailDirty=false;$('detailSaveStatus').textContent='ローカルに保存しました';toast('変更を保存しました。');await refresh();}
+async function saveDetail(){if(!state.current)return;const it=await call('update',{id:state.current.id,patch:{title:$('detailTitle').value,content:$('detailMemo').value,tags:$('detailTags').value.split(/[,，]/).map(x=>x.trim()).filter(Boolean)}});state.current=it;state.detailDirty=false;$('detailSaveStatus').textContent='ローカルに保存しました';toast('変更を保存しました。');await refresh();}
 async function detailAction(fn){ if(state.detailDirty) await saveDetail(); const id=state.current.id;await fn(id);state.images.delete(id);await openDetail(id);await refresh(); }
 function closeDialog(id){if(id==='detailDialog' && state.detailDirty && !confirm('未保存の変更を破棄して閉じますか？'))return;$(id).close();}
 async function openSettings(){
@@ -99,6 +101,7 @@ async function saveSettings(){
 async function pull(){ if(state.busy)return;state.busy=true;$('pullButton').disabled=true;$('pullButton').textContent='取り込み中…';try{const result=await call('pull');const errors=result.filter(r=>r.error);const more=result.some(r=>r.more);toast(!result.length?'設定画面でSlack / Discordの連携先を追加してください。':errors.length?errors.map(r=>`${r.source}: ${r.error}`).join('\n'):`取り込み完了。${result.reduce((n,r)=>n+(r.count||0),0)}件を追加・更新。${more?' 続きがあります。もう一度取り込んでください。':''}`,Boolean(errors.length));await refresh();}finally{state.busy=false;$('pullButton').disabled=false;$('pullButton').textContent='↓ 取り込む';}}
 $('addButton').onclick=$('emptyAdd').onclick=openCapture;
 $('captureForm').onsubmit=e=>{e.preventDefault();action(saveCapture);};
+$('captureKind').onchange=updateCaptureKind;
 $('captureInput').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();action(saveCapture);}});
 $('captureNote').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();action(saveCapture);}});
 for(const btn of document.querySelectorAll('[data-close]'))btn.onclick=()=>closeDialog(btn.dataset.close);
