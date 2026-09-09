@@ -30,9 +30,21 @@ jobs:
       - name: Core behavior tests (Windows)
         if: runner.os == 'Windows'
         run: node --test --test-name-pattern="X URLs|tracking|Slack formatting|Duplicate|Offline note|Markdown|Corrupt|Manual tags|Incomplete AI|Content-addressed|Metadata|robots|private IPs|429|Pure private" tests/core.test.mjs
-      - name: Service concurrency tests (Windows)
+      - name: Local service persistence test (Windows)
         if: runner.os == 'Windows'
-        run: node --test --test-name-pattern="Local service|Writer lock|Capture stays|concurrent|X lookup" tests/core.test.mjs
+        run: node --test --test-name-pattern="Local service" tests/core.test.mjs
+      - name: Writer lock test (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="Writer lock" tests/core.test.mjs
+      - name: Import concurrency test (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="Capture stays" tests/core.test.mjs
+      - name: Enrichment concurrency tests (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="concurrent" tests/core.test.mjs
+      - name: Cross-instance X lookup test (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern="X lookup" tests/core.test.mjs
       - name: Connector tests
         run: node --test tests/adapters.test.mjs
       - name: Git tests
