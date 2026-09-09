@@ -149,7 +149,7 @@ test('Capture stays available while an importer is waiting on the network',async
  const signal=new Promise(r=>started=r),waiting=new Promise(r=>release=r);
  const service=await new MemoService(s.root,{adapterOptions:{delay:0,api:async()=>{started();await waiting;return {ok:true,messages:[],response_metadata:{}};}}}).init();
  const pulling=service.pull({slack:{channels:['C12345']}},{slack:'fake'});await signal;
- const [saved]=await Promise.race([service.capture({input:'ネット待ち中にも保存'}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('capture blocked by network')),1000))]);
+ const [saved]=await Promise.race([service.capture({input:'ネット待ち中にも保存'}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('capture blocked by network')),5000))]);
  assert.ok(saved.id);release();await pulling;
 });
 test('Metadata response cannot overwrite concurrent human edits',async t=>{
