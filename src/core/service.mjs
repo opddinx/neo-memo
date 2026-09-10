@@ -30,7 +30,7 @@ export class MemoService {
   }
   async migrateStore() {
     await migrateV1Store(this.root, { checkpoints: this.connectorState }); await this.store.init();
-    try { await this.git.init(); await this.git.commit('migrate: v1 data store'); } catch (e) { this.gitWarning = safeError(e); }
+    try { await this.git.init(); await this.git.commit('migrate: data store to schema v3'); } catch (e) { this.gitWarning = safeError(e); }
     return this;
   }
   mutate(fn, message = 'memo: save') {
@@ -51,6 +51,8 @@ export class MemoService {
   addNote(content) { return this.mutate(() => this.store.createNote(content), 'capture: add quick note'); }
   addReadingNote(args) { return this.mutate(() => this.store.createReadingNote(args), 'capture: add reading note'); }
   update(id, patch) { return this.mutate(() => this.store.update(id, patch), 'memo: edit card'); }
+  appendMemo(id, content) { return this.mutate(() => this.store.appendMemoEntry(id, content), 'memo: append entry'); }
+  updateMemoEntry(id, entryId, content) { return this.mutate(() => this.store.updateMemoEntry(id, entryId, content), 'memo: edit entry'); }
   async status() { return { root: this.root, cacheRoot: this.cacheRoot, count: (await this.list()).length, gitWarning: this.gitWarning, git: await this.git.status().catch(e => ({ error: safeError(e) })), sources: (await this.connectorState.read()).sources }; }
   async pull(config, secrets, { only = '' } = {}) {
     const results = [];
@@ -122,5 +124,5 @@ export class MemoService {
     }, 'enrich: X preview');
   }
   syncGit() { return this.mutate(async () => { const r = await this.git.sync(); await this.store.reload(); return r; }, 'memo: before remote sync'); }
-  async exportJSON() { return { schema: 2, items: [...await this.list(), ...await this.list({archived:true})] }; }
+  async exportJSON() { return { schema: 3, items: [...await this.list(), ...await this.list({archived:true})] }; }
 }

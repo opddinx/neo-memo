@@ -88,7 +88,7 @@ const handlers = {
     await util.writeJSON(path.join(appDir,'config.json'),config); changed(); return publicSettings();
   },
   migrateStore: async () => {
-    const result = await dialog.showOpenDialog(win,{ title: 'Select Neo Memo v1 Store to migrate', properties: ['openDirectory'] });
+    const result = await dialog.showOpenDialog(win,{ title: 'Select Neo Memo schema v1/v2 Store to migrate', properties: ['openDirectory'] });
     if (result.canceled) return null;
     const { MemoService } = await import('../core/service.mjs');
     const next = new MemoService(result.filePaths[0], { resizeImage, cachePath: config.cachePath });
@@ -111,6 +111,8 @@ const handlers = {
     return result;
   },
   update: async p => { const r = await service.update(p.id,p.patch); changed(); return r; },
+  appendMemo: async p => { const r = await service.appendMemo(p.id,util.text(p.content)); changed(); return r; },
+  updateMemoEntry: async p => { const r = await service.updateMemoEntry(p.id,p.entryId,util.text(p.content)); changed(); return r; },
   asset: p => service.asset(p.id),
   pull: () => pullAll(),
   reconnect: async () => {

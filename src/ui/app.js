@@ -10,6 +10,8 @@ function date(s) { try { return new Date(s).toLocaleDateString('ja-JP',{month:'2
 function sourceLabel(type) { return ({web:'WEB',note:'NOTE',reading_note:'READING',x:'X',other:'OTHER'})[type] || type.toUpperCase(); }
 function kindName(type) { return ({web:'Web',note:'Quick Note',reading_note:'Reading Note',x:'X',other:'その他'})[type] || 'すべてのストック'; }
 function domain(it) { try { return new URL(it.original_url || it.url).hostname.replace(/^www\./,''); } catch { return 'just a thought'; } }
+function itemMemo(it) { return (it.memoEntries || []).map(entry=>entry.content).filter(Boolean).join('\n\n'); }
+function fullDate(value) { try { return new Date(value).toLocaleString('ja-JP'); } catch { return ''; } }
 const imageObserver = new IntersectionObserver(entries=>{
   for (const e of entries) if (e.isIntersecting) {
     imageObserver.unobserve(e.target); const img=e.target;
@@ -32,9 +34,9 @@ function renderCards() {
     else { const ph=element('div',`card-placeholder ${it.type}`); ph.append(element('span','source-initial',({note:'“',reading_note:'§',x:'𝕏'})[it.type] || '↗'),element('span','source-domain',it.type==='reading_note' ? 'book note' : domain(it))); card.append(ph); }
     const body=element('div','card-body'), meta=element('div','card-meta');
     meta.append(element('span','source-badge',sourceLabel(it.type)),element('span','',it.source?.locator || domain(it)),element('time','',date(it.createdAt || it.saved_at)));
-    body.append(meta,element('h2','',it.source?.title || it.title || (it.content || '').slice(0,90)));
+    const memo=itemMemo(it);body.append(meta,element('h2','',it.source?.title || it.title || memo.slice(0,90)));
     if(it.type==='reading_note' && it.title) body.append(element('p','card-description',it.title));
-    const desc=it.content || it.summary || it.description || 'URLとメモを保存済み。情報はあとから補完できます。';
+    const desc=(it.memoEntries || []).at(-1)?.content || it.summary || it.description || 'URLとメモを保存済み。情報はあとから補完できます。';
     if(desc) body.append(element('p','card-description',desc));
     const tags=element('div','tags');
     for(const tag of [...new Set([...it.tags,...(it.ai_tags||[])])].slice(0,4)) tags.append(element('span','tag',`# ${tag}`));
@@ -67,8 +69,9 @@ async function saveCapture(){
 }
 async function openDetail(id){
   const it=await call('get',{id});state.current=it;state.detailDirty=false;
-  $('detailType').textContent=sourceLabel(it.type);$('detailMeta').textContent=`${it.source?.title || domain(it)}${it.source?.locator ? ` · ${it.source.locator}` : ''} · ${new Date(it.createdAt || it.saved_at).toLocaleString('ja-JP')} · ${it.source?.creator || it.author || ''}`;
-  $('detailTitle').value=it.title || '';$('detailMemo').value=it.content || '';$('detailTags').value=it.tags.join(', ');
+  $('detailType').textContent=sourceLabel(it.type);$('detailSourceTitle').textContent=it.source?.title || it.title || itemMemo(it).split('\n')[0].slice(0,120) || domain(it);
+  $('detailMeta').replaceChildren();for(const value of [it.source?.creator || it.author,it.source?.locator,`作成 ${fullDate(it.createdAt || it.saved_at)}`,`更新 ${fullDate(it.updatedAt || it.updated_at)}`].filter(Boolean))$('detailMeta').append(element('span','',value));
+  $('detailTitle').value=it.title || '';$('detailTags').value=it.tags.join(', ');$('newMemoEntry').value='';renderMemoEntries(it);
   $('originalButton').classList.toggle('hidden',!it.url);
   $('detailSummary').textContent=it.summary || it.description || '説明はまだありません。自分のメモだけでも保存・検索できます。';
   $('summaryLabel').textContent=it.summary ? ({metadata_only:'AI説明（メタデータのみから生成）',source_text:'AI要約（取得済み投稿本文から生成）',metadata_and_notes:'AI整理（ページ情報＋自分のメモ）',user_notes:'AI整理（自分のメモ）'}[it.summary_basis] || 'AI説明') : 'ページ／投稿の説明';
@@ -76,15 +79,34 @@ async function openDetail(id){
   $('captureHistory').replaceChildren();
   for(const cap of it.captures){const div=element('div','capture-entry',cap.note || '（メモなし）');div.append(element('small','',`${new Date(cap.at).toLocaleString('ja-JP')} · ${cap.source}`));$('captureHistory').append(div);}
   $('detailAITags').replaceChildren();for(const tag of it.ai_tags || []) $('detailAITags').append(element('span','tag ai-tag',`AI · ${tag}`));
-  $('detailSaveStatus').textContent='変更は「保存」で確定';$('archiveButton').textContent=it.archived?'一覧に戻す':'アーカイブ';
+  $('detailSaveStatus').textContent='タイトル・タグは「保存」で確定';$('archiveButton').textContent=it.archived?'一覧に戻す':'アーカイブ';
   $('detailX').classList.toggle('hidden',it.type!=='x');
   $('detailEnrich').textContent=it.type==='x' ? (it.preview_url?'取得済み画像を保存':'X oEmbedを再取得') : '情報を補完';$('detailEnrich').disabled=['note','reading_note'].includes(it.type);
   $('detailImage').classList.add('hidden');if(it.preview){const img=await call('asset',{id});if(img){$('detailImage').src=img;$('detailImage').classList.remove('hidden');}}
   if(!$('detailDialog').open)$('detailDialog').showModal();
 }
-async function saveDetail(){if(!state.current)return;const it=await call('update',{id:state.current.id,patch:{title:$('detailTitle').value,content:$('detailMemo').value,tags:$('detailTags').value.split(/[,，]/).map(x=>x.trim()).filter(Boolean)}});state.current=it;state.detailDirty=false;$('detailSaveStatus').textContent='ローカルに保存しました';toast('変更を保存しました。');await refresh();}
-async function detailAction(fn){ if(state.detailDirty) await saveDetail(); const id=state.current.id;await fn(id);state.images.delete(id);await openDetail(id);await refresh(); }
-function closeDialog(id){if(id==='detailDialog' && state.detailDirty && !confirm('未保存の変更を破棄して閉じますか？'))return;$(id).close();}
+function renderMemoEntries(it, openId=''){
+  const root=$('memoEntries');root.replaceChildren();
+  if(!it.memoEntries?.length)root.append(element('p','memo-empty','まだ自分のメモはありません。下の欄から最初のメモを追加できます。'));
+  for(const [index,entry] of (it.memoEntries||[]).entries()){
+    const details=element('details','memo-entry');details.dataset.entryId=entry.id;details.open=entry.id===openId;
+    const summary=element('summary','memo-entry-summary'),heading=element('span','memo-entry-heading',index===0?'最初のメモ':`${index+1}件目の追記`),stamp=element('time','',fullDate(entry.createdAt));
+    const preview=element('span','memo-entry-preview',entry.content.split('\n').slice(0,4).join('\n'));summary.append(heading,stamp,preview);details.append(summary);
+    const body=element('div','memo-entry-body'),content=element('div','memo-entry-content',entry.content),edit=element('button','secondary','編集する');edit.type='button';
+    edit.onclick=e=>{e.preventDefault();content.classList.add('hidden');edit.classList.add('hidden');editor.classList.remove('hidden');textarea.focus();};
+    const editor=element('div','memo-entry-editor hidden'),textarea=document.createElement('textarea'),actions=element('div','memo-entry-actions'),cancel=element('button','text-button','キャンセル'),save=element('button','primary','このメモを保存');
+    textarea.value=entry.content;textarea.rows=Math.min(24,Math.max(8,entry.content.split('\n').length+2));textarea.dataset.original=entry.content;
+    textarea.oninput=()=>{textarea.dataset.dirty=String(textarea.value!==textarea.dataset.original);};cancel.type=save.type='button';
+    cancel.onclick=()=>{textarea.value=textarea.dataset.original;textarea.dataset.dirty='false';editor.classList.add('hidden');content.classList.remove('hidden');edit.classList.remove('hidden');};
+    save.onclick=()=>action(()=>saveMemoEntry(entry.id,textarea.value));actions.append(cancel,save);editor.append(textarea,actions);body.append(content,edit,editor);details.append(body);root.append(details);
+  }
+}
+function dirtyMemoEntry(){return [...document.querySelectorAll('.memo-entry-editor textarea')].some(node=>node.dataset.dirty==='true');}
+async function saveMemoEntry(entryId,content){const it=await call('updateMemoEntry',{id:state.current.id,entryId,content});state.current=it;renderMemoEntries(it,entryId);toast('メモを更新しました。');await refresh();}
+async function appendMemo(){const content=$('newMemoEntry').value;if(!content.trim())throw new Error('追記する内容を入力してください。');const it=await call('appendMemo',{id:state.current.id,content});state.current=it;$('newMemoEntry').value='';renderMemoEntries(it,it.memoEntries.at(-1).id);$('detailMeta').lastChild.textContent=`更新 ${fullDate(it.updatedAt||it.updated_at)}`;toast('新しい追記を保存しました。');await refresh();}
+async function saveDetail(){if(!state.current)return;const it=await call('update',{id:state.current.id,patch:{title:$('detailTitle').value,tags:$('detailTags').value.split(/[,，]/).map(x=>x.trim()).filter(Boolean)}});state.current=it;state.detailDirty=false;$('detailSaveStatus').textContent='ローカルに保存しました';toast('タイトルとタグを保存しました。');await refresh();}
+async function detailAction(fn){ if(dirtyMemoEntry())throw new Error('編集中のメモを保存またはキャンセルしてください。');if(state.detailDirty) await saveDetail(); const id=state.current.id;await fn(id);state.images.delete(id);await openDetail(id);await refresh(); }
+function closeDialog(id){if(id==='detailDialog' && (state.detailDirty||dirtyMemoEntry()||$('newMemoEntry').value.trim()) && !confirm('未保存の変更を破棄して閉じますか？'))return;$(id).close();}
 async function openSettings(){
   settings=await call('settings');$('repoPath').textContent=settings.root;
   for(const kind of ['slack','discord']){ $(`${kind}Channels`).value=(settings[kind]?.channels || []).join(', ');$(`${kind}User`).value=settings[kind]?.user || ''; }
@@ -106,8 +128,10 @@ $('captureInput').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.ke
 $('captureNote').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();action(saveCapture);}});
 for(const btn of document.querySelectorAll('[data-close]'))btn.onclick=()=>closeDialog(btn.dataset.close);
 $('detailDialog').addEventListener('cancel',e=>{e.preventDefault();closeDialog('detailDialog');});
-for(const id of ['detailTitle','detailMemo','detailTags'])$(id).oninput=()=>{state.detailDirty=true;$('detailSaveStatus').textContent='未保存の変更あり';};
+for(const id of ['detailTitle','detailTags'])$(id).oninput=()=>{state.detailDirty=true;$('detailSaveStatus').textContent='未保存の変更あり';};
 $('saveDetail').onclick=()=>action(saveDetail);
+$('appendMemo').onclick=()=>action(appendMemo);
+$('newMemoEntry').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();action(appendMemo);}});
 $('originalButton').onclick=()=>action(()=>call('openURL',{url:state.current.original_url||state.current.url}));
 $('detailEnrich').onclick=()=>action(()=>detailAction(id=>call(state.current.type==='x'&&state.current.preview_url?'xImage':'enrich',{id})));
 $('detailX').onclick=()=>action(async()=>{if(!confirm('公式X APIでこの投稿を取得します。API利用料が発生します。続けますか？'))return;await detailAction(id=>call('xLookup',{id}));});
@@ -124,20 +148,20 @@ $('enrichButton').onclick=()=>action(async()=>{ $('enrichButton').disabled=true;
 $('settingsButton').onclick=()=>action(openSettings);$('settingsForm').onsubmit=e=>{e.preventDefault();action(saveSettings);};
 function addStoreButton(id,label){const button=document.createElement('button');button.id=id;button.type='button';button.className='secondary';button.textContent=label;$('chooseRoot').insertAdjacentElement('afterend',button);}
 addStoreButton('initStore','空フォルダをStoreとして初期化');
-addStoreButton('migrateStore','v1 Storeを移行');
+addStoreButton('migrateStore','schema v1/v2 Storeを移行');
 $('chooseRoot').onclick=()=>action(async()=>{const r=await call('chooseRoot');if(r){state.images.clear();await openSettings();await refresh();}});
 $('initStore').onclick=()=>action(async()=>{const r=await call('initStore');if(r){state.images.clear();await openSettings();await refresh();toast('Neo Memo Storeを初期化しました。');}});
-$('migrateStore').onclick=()=>action(async()=>{const r=await call('migrateStore');if(r){state.images.clear();await openSettings();await refresh();toast('v1 Storeを移行しました。');}});
+$('migrateStore').onclick=()=>action(async()=>{const r=await call('migrateStore');if(r){state.images.clear();await openSettings();await refresh();toast('Storeをschema v3へ移行しました。');}});
 $('folderButton').onclick=()=>action(()=>call('openFolder'));
 $('gitSyncButton').onclick=()=>action(async()=>{await call('gitSync');toast('Git remoteへ同期しました。');await refresh();});
 $('importButton').onclick=()=>action(async()=>{const r=await call('importFile');if(r){toast(`${r.count}件を取り込みました。`);await refresh();}});
 $('exportButton').onclick=()=>action(async()=>{const r=await call('export');if(r)toast('JSONを書き出しました。');});
 $('clearSecrets').onclick=()=>action(async()=>{if(confirm('保存したAPIキーを削除しますか？')){await call('saveSettings',{clearSecrets:true});await openSettings();}});
 $('xPullButton').onclick=()=>action(async()=>{if(!confirm('保存済み設定を使い、X APIからブックマークを最大100件取得します。API利用料が発生します。続けますか？'))return;const r=await call('xPull');toast(`${r.count}件を取り込みました。${r.more?'続きがあります。':''}`);await refresh();});
-document.addEventListener('keydown',e=>{if(e.metaKey||e.ctrlKey){if(e.key.toLowerCase()==='k'){e.preventDefault();$('search').focus();}if(e.key.toLowerCase()==='n'){e.preventDefault();if(!document.querySelector('dialog[open]'))openCapture();}if(e.key==='Enter'&&$('detailDialog').open){e.preventDefault();action(saveDetail);}}});
+document.addEventListener('keydown',e=>{if(e.metaKey||e.ctrlKey){if(e.key.toLowerCase()==='k'){e.preventDefault();$('search').focus();}if(e.key.toLowerCase()==='n'){e.preventDefault();if(!document.querySelector('dialog[open]'))openCapture();}if(e.key==='Enter'&&$('detailDialog').open&&!e.target.closest('.memo-entry-editor')&&e.target.id!=='newMemoEntry'){e.preventDefault();action(saveDetail);}}});
 function connection(){ $('connection').textContent=navigator.onLine?'ONLINE':'OFFLINE'; }
 window.addEventListener('offline',connection);window.addEventListener('online',()=>{connection();action(async()=>{const r=await call('reconnect');const errors=r?.filter(x=>x.error)||[];if(errors.length)toast(errors.map(x=>x.error).join('\n'),true);await refresh();});});
-window.addEventListener('beforeunload',e=>{if(state.detailDirty){e.preventDefault();e.returnValue='';}});
+window.addEventListener('beforeunload',e=>{if(state.detailDirty||dirtyMemoEntry()||$('newMemoEntry').value.trim()){e.preventDefault();e.returnValue='';}});
 connection();
 if(window.neo){ window.neo.onChanged(scheduleRefresh);action(async()=>{settings=await call('settings');if(settings.startupError){$('warning').classList.remove('hidden');$('warning').textContent=settings.startupError;await openSettings();}else await refresh();}); }
 else { $('warning').classList.remove('hidden');$('warning').textContent='この画面はデスクトップアプリ用です。READMEの手順で npm start から起動してください。'; }

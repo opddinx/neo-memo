@@ -2,7 +2,7 @@
 
 Neo Memoは、URLと短いメモを素早く捕獲し、あとから一覧・編集・検索できる軽量な個人用メモアプリです。デスクトップGUIとCLIを備え、常設サーバーを必要としないlocal-first設計です。
 
-Quick Noteに加え、本のタイトルと任意の著者・ページ位置を添えたReading Noteを保存できます。ユーザー本文`content`、出典`source`、派生情報`summary`はStore上で明確に分離されます。
+Quick Noteに加え、本のタイトルと任意の著者・ページ位置を添えたReading Noteを保存できます。ユーザーのメモ履歴`memoEntries`、出典`source`、派生情報`summary`はStore上で明確に分離されます。追記は安定したEntry IDと作成・更新日時を持ち、過去のメモを上書きせず時系列に蓄積します。
 
 アプリ本体とデータは完全に独立しています。アプリの配置場所からStoreの場所を推測せず、Storeは任意の絶対パスに置けます。個人データを含むStoreは、アプリとは別のprivate Git repositoryとして管理できます。Git remoteは任意で、remoteなしでも保存・閲覧・編集・検索・ローカルcommitが動作します。
 
@@ -33,6 +33,7 @@ node bin/neo-memo.mjs add "https://example.com" --store /path/to/neo-memo-data
 node bin/neo-memo.mjs search "graphics" --store /path/to/neo-memo-data
 node bin/neo-memo.mjs add-note "思いついた内容" --store /path/to/neo-memo-data
 node bin/neo-memo.mjs add-reading-note --book "The Design of Everyday Things" --location "p.142" "物理的制約そのものより..." --store /path/to/neo-memo-data
+node bin/neo-memo.mjs note <item-id> "あとから気づいたこと" --store /path/to/neo-memo-data
 ```
 
 環境変数も利用できます。`--store` が常に優先されます。
@@ -64,10 +65,10 @@ neo-memo-data/
 
 ItemにはURLと独立した不変IDがあります。assetは `sha256:<hash>` で参照されます。connector checkpoint、検索index、embedding、thumbnail cache、一時ファイル、API tokenはStoreに含まれません。
 
-既存v1 Storeは内容を保持したまま明示的に移行できます。
+既存schema v1/v2 Storeは内容を保持したままschema v3へ明示的に移行できます。v2の`content`は、Item ID・日時を維持したまま最初の`memoEntries`要素になります。
 
 ```sh
-node bin/neo-memo.mjs migrate store --store /path/to/existing-v1-store
+node bin/neo-memo.mjs migrate store --store /path/to/existing-store
 ```
 
 詳細は[Neo Memo Store contract](docs/REPOSITORY-OPERATIONS.md)を参照してください。

@@ -1,0 +1,76 @@
+.detail-dialog {
+  width: min(1040px, 96vw);
+  height: 94vh;
+  max-width: 96vw;
+  max-height: 94vh;
+  padding: 0;
+  overflow: hidden;
+}
+.detail-dialog[open] { display: flex; flex-direction: column; }
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px 38px 22px;
+  border-bottom: 1px solid var(--line);
+  background: #fdfdfb;
+  flex-shrink: 0;
+}
+.detail-header h1 {
+  font-size: clamp(25px, 3vw, 38px);
+  line-height: 1.25;
+  letter-spacing: -.8px;
+  margin: 9px 0 12px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #7f877c;
+  margin: 0;
+}
+.detail-scroll { padding: 0 38px 34px; overflow-y: auto; min-height: 0; }
+.detail-image { max-height: 380px; margin-top: 24px; }
+.title-input { font-size: 18px; font-weight: 600; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.detail-section { margin: 30px 0; }
+.section-title { font-size: 13px; color: #64725f; font-weight: 700; }
+.body-text { font-size: 14px; }
+.memo-entries { display: flex; flex-direction: column; gap: 12px; }
+.memo-entry { border: 1px solid var(--line); border-radius: 10px; background: var(--paper); overflow: hidden; }
+.memo-entry-summary { cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 7px 18px; padding: 15px 17px; list-style: none; }
+.memo-entry-summary::-webkit-details-marker { display: none; }
+.memo-entry-heading { font-size: 13px; font-weight: 700; }
+.memo-entry-summary time { font-size: 10px; color: var(--muted); }
+.memo-entry-preview {
+  grid-column: 1 / 3;
+  font-size: 13px;
+  line-height: 1.75;
+  color: #70776f;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.memo-entry[open] .memo-entry-preview { display: none; }
+.memo-entry-body { border-top: 1px solid var(--line); padding: 20px; }
+.memo-entry-content { font-size: 15px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 16px; }
+.memo-entry-editor textarea { min-height: min(54vh, 620px); font-size: 15px; line-height: 1.85; }
+.memo-entry-actions, .memo-compose-actions { display: flex; justify-content: flex-end; align-items: center; gap: 16px; margin-top: 12px; }
+.memo-compose { margin-top: 22px; padding: 20px; border-radius: 11px; background: #f0f2ec; }
+.memo-compose label { margin-top: 0; font-size: 13px; }
+.memo-compose textarea { min-height: 150px; font-size: 15px; }
+.memo-compose-actions .helper { margin-right: auto; }
+.memo-empty { padding: 18px; border: 1px dashed var(--line); border-radius: 9px; color: var(--muted); }
+.capture-entry small { font-size: 10px; margin-top: 4px; }
+.detail-actions { margin: 0; padding: 15px 38px; border-top: 1px solid var(--line); background: #fdfdfbf5; flex-shrink: 0; }
+@media (max-width: 700px) {
+  .detail-header { padding: 22px 20px 18px; }
+  .detail-scroll { padding: 0 20px 28px; }
+  .detail-actions { padding: 13px 20px; }
+  .detail-header h1 { font-size: 25px; }
+}

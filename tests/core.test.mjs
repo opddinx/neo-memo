@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Store, encodeItem, decodeItem, initStore, validateStore, migrateV1Store } from '../src/store/index.mjs';
+import { Store, encodeItem, decodeItem, initStore, validateStore, migrateStore, migrateV1Store, memoText } from '../src/store/index.mjs';
 import { normalizeURL, extractCapture } from '../src/core/urls.mjs';
 import { MemoService } from '../src/core/service.mjs';
 import { parseMetadata, robotsAllowed, enrichItem, aiAnnotate, fetchMetadata } from '../src/core/metadata.mjs';
@@ -30,12 +30,12 @@ test('X oEmbed accepts x.com and twitter.com status URLs and rejects non-status 
 test('X oEmbed extracts text and author without storing markup in user content',async()=>{
  const parsed=parseXOEmbed({author_name:'Ada Lovelace',html:'<blockquote class="twitter-tweet"><p>Hello &amp; welcome<br>Line 2 <a href="https://t.co/x">link</a><script>bad()</script></p>&mdash; Ada</blockquote><script src="embed.js"></script>'});
  assert.equal(parsed.sourceText,'Hello & welcome\nLine 2 link');assert.equal(parsed.creator,'Ada Lovelace');assert.ok(!/[<>]|bad\(\)/.test(parsed.sourceText));
- const item={schema:2,id:'x-oembed-item',type:'x',title:'',content:'my canonical memo',source:{kind:'x',url:'https://x.com/ada/status/12345',externalId:'12345'},summary:'',tags:[],assets:[],createdAt:'2020-01-01T00:00:00.000Z',updatedAt:'2020-01-01T00:00:00.000Z',captures:[],ai_tags:[],archived:false,enrichment:{status:'pending',attempts:0}};
- const enriched=await enrichXItem(item,{transport:async()=>({status:200,headers:{},buffer:Buffer.from(JSON.stringify({author_name:'Ada',html:'<blockquote><p>Source text</p></blockquote>'}))})});assert.equal(enriched.content,'my canonical memo');assert.equal(enriched.source.creator,'Ada');assert.equal(enriched.source_text,'Source text');assert.equal(enriched.description,'Source text');assert.equal(enriched.enrichment.adapter,'x-oembed');
+ const item={schema:3,id:'x-oembed-item',type:'x',title:'',memoEntries:[{id:'memo-entry-one',content:'my canonical memo',createdAt:'2020-01-01T00:00:00.000Z',updatedAt:'2020-01-01T00:00:00.000Z'}],source:{kind:'x',url:'https://x.com/ada/status/12345',externalId:'12345'},summary:'',tags:[],assets:[],createdAt:'2020-01-01T00:00:00.000Z',updatedAt:'2020-01-01T00:00:00.000Z',captures:[],ai_tags:[],archived:false,enrichment:{status:'pending',attempts:0}};
+ const enriched=await enrichXItem(item,{transport:async()=>({status:200,headers:{},buffer:Buffer.from(JSON.stringify({author_name:'Ada',html:'<blockquote><p>Source text</p></blockquote>'}))})});assert.equal(memoText(enriched),'my canonical memo');assert.deepEqual(enriched.memoEntries,item.memoEntries);assert.equal(enriched.source.creator,'Ada');assert.equal(enriched.source_text,'Source text');assert.equal(enriched.description,'Source text');assert.equal(enriched.enrichment.adapter,'x-oembed');
 });
 test('X oEmbed failure preserves capture and can be retried later without paid API',async t=>{
  const s=await store(t),calls=[];const service=await new MemoService(s.root,{xOEmbedTransport:async url=>{calls.push(url);throw new Error('offline');},adapterOptions:{api:async()=>{throw new Error('paid X API must not run');}}}).init();
- const [saved]=await service.capture({input:'https://twitter.com/ada/status/555 この見せ方よさそう',source:'slack:C1',event_id:'m1'});let item=await service.enrich(saved.id);assert.equal(item.enrichment.status,'failed');assert.equal(item.captures[0].note,'この見せ方よさそう');assert.equal(item.content,'');assert.equal(calls.length,1);
+ const [saved]=await service.capture({input:'https://twitter.com/ada/status/555 この見せ方よさそう',source:'slack:C1',event_id:'m1'});let item=await service.enrich(saved.id);assert.equal(item.enrichment.status,'failed');assert.equal(item.captures[0].note,'この見せ方よさそう');assert.deepEqual(item.memoEntries,[]);assert.equal(calls.length,1);
  service.options.xOEmbedTransport=async()=>({status:200,headers:{},buffer:Buffer.from(JSON.stringify({author_name:'Ada',html:'<blockquote><p>Later online</p></blockquote>'}))});const [retry]=await service.enrichPendingX();assert.equal(retry.status,'ready');item=await service.get(saved.id);assert.equal(item.source_text,'Later online');assert.equal(item.captures[0].note,'この見せ方よさそう');
 });
 test('Only known tracking parameters removed; semantic query and fragments retained',()=>{
@@ -59,8 +59,8 @@ test('Offline note without URL and Japanese search survive reload',async t=>{
  await s.update(r.id,{content:'触覚にも応用できるか。',tags:['光学']});await s.reload();
  assert.equal(s.list({query:'水面 触覚'})[0].id,r.id);assert.equal(s.list({query:'光学'}).length,1);
 });
-test('Quick Note stores URL-free user text as canonical content',async t=>{
- const s=await store(t),item=await s.createNote('思いついた内容');assert.equal(item.type,'note');assert.equal(item.content,'思いついた内容');assert.equal(item.source,undefined);assert.equal(s.get(item.id).content,'思いついた内容');
+test('Quick Note stores URL-free user text as its first canonical memo entry',async t=>{
+ const s=await store(t),item=await s.createNote('思いついた内容');assert.equal(item.type,'note');assert.equal(item.memoEntries.length,1);assert.equal(memoText(item),'思いついた内容');assert.equal(item.source,undefined);assert.equal(memoText(s.get(item.id)),'思いついた内容');
 });
 test('Reading Note requires a book and accepts optional/free-form locator',async t=>{
  const s=await store(t);await assert.rejects(s.createReadingNote({content:'memo'}),/book/i);
@@ -72,8 +72,14 @@ test('Book title search returns multiple notes from the same book',async t=>{
  const s=await store(t);await s.createReadingNote({book:'Designing Interfaces',location:'p.10',content:'one'});await s.createReadingNote({book:'Designing Interfaces',content:'two'});await s.createReadingNote({book:'Other Book',content:'three'});
  const found=s.list({query:'Designing Interfaces'});assert.equal(found.length,2);assert.ok(found.every(item=>item.source.title==='Designing Interfaces'));
 });
+test('Memo entries append in order, retain stable IDs, edit independently, and all remain searchable',async t=>{
+ const s=await store(t),item=await s.createNote('最初の文章'),first=item.memoEntries[0];
+ await s.appendMemoEntry(item.id,'二回目の追記');let current=s.get(item.id);assert.equal(current.memoEntries.length,2);assert.equal(current.memoEntries[0].id,first.id);assert.equal(current.memoEntries[0].createdAt,first.createdAt);const second=current.memoEntries[1];
+ await s.updateMemoEntry(item.id,first.id,'修正した最初の文章');current=s.get(item.id);assert.equal(current.memoEntries[0].id,first.id);assert.equal(current.memoEntries[1].id,second.id);assert.equal(current.memoEntries[1].content,'二回目の追記');assert.equal(s.list({query:'修正した'}).length,1);assert.equal(s.list({query:'二回目'}).length,1);
+ await assert.rejects(s.update(item.id,{content:'old client overwrite'}),/cannot overwrite multiple memo entries/);assert.equal(s.get(item.id).memoEntries.length,2);
+});
 test('Markdown round trip preserves arbitrary body including YAML-like separators',async t=>{
- const s=await store(t);const [r]=await s.capture({input:'hello'});const it=s.get(r.id);it.content='## Notes\n\n---\nnot metadata\n<script>alert(1)</script>';
+ const s=await store(t);const [r]=await s.capture({input:'hello'});const it=s.get(r.id);it.memoEntries[0].content='## Notes\n\n---\nnot metadata\n<script>alert(1)</script>';
  assert.deepEqual(decodeItem(encodeItem(it)),it);
 });
 test('Corrupt metadata is not silently discarded',()=>{assert.throws(()=>decodeItem('---\n{bad\n---\nbody'));});
@@ -82,7 +88,7 @@ test('Manual tags and notes survive AI re-annotation',async t=>{
  await s.update(r.id,{content:'secret draft',tags:['必読']});let request;
  const api=async(_url,o)=>{request=o.body;return {status:'completed',output:[{content:[{type:'output_text',text:'{"summary":"説明は短い。","tags":["形状"]}'}]}]};};
  await aiAnnotate(s,r.id,{key:'fake',model:'test-model',api});
- const it=s.get(r.id);assert.deepEqual(it.tags,['必読']);assert.equal(it.content,'secret draft');assert.deepEqual(it.ai_tags,['形状']);assert.equal(request.store,false);assert.ok(!request.input.includes('secret draft'));assert.ok(!request.input.includes('private reason'));
+ const it=s.get(r.id);assert.deepEqual(it.tags,['必読']);assert.equal(memoText(it),'secret draft');assert.deepEqual(it.ai_tags,['形状']);assert.equal(request.store,false);assert.ok(!request.input.includes('secret draft'));assert.ok(!request.input.includes('private reason'));
 });
 test('Incomplete AI response leaves stored content unchanged',async t=>{
  const s=await store(t);const [r]=await s.capture({input:'https://incomplete-ai.example/a'});await assert.rejects(aiAnnotate(s,r.id,{key:'fake',model:'m',api:async()=>({status:'incomplete',output:[]})}));assert.equal(s.get(r.id).summary,'');
@@ -92,7 +98,7 @@ test('Content-addressed image store deduplicates and rejects SVG',async t=>{
 });
 test('Store can be initialized at any absolute path and validates its schema',async t=>{
  const parent=await fs.mkdtemp(path.join(os.tmpdir(),'anywhere-'));const root=path.join(parent,'unrelated','data-store');t.after(()=>fs.rm(parent,{recursive:true,force:true}));
- const s=await initStore(root), meta=await validateStore(root);assert.equal(s.root,path.resolve(root));assert.equal(meta.format,'neo-memo-store');assert.equal(meta.schemaVersion,2);assert.match(meta.storeId,/^[0-9a-f-]{36}$/i);
+ const s=await initStore(root), meta=await validateStore(root);assert.equal(s.root,path.resolve(root));assert.equal(meta.format,'neo-memo-store');assert.equal(meta.schemaVersion,3);assert.match(meta.storeId,/^[0-9a-f-]{36}$/i);
  await fs.writeFile(path.join(root,'neo-memo-store.json'),JSON.stringify({...meta,schemaVersion:999}));await assert.rejects(validateStore(root),/Unsupported/);
 });
 test('Store rejects missing or invalid marker instead of creating data implicitly',async t=>{
@@ -109,9 +115,10 @@ test('CLI --store takes priority over NEO_MEMO_STORE and missing Store is explic
 });
 test('CLI add-note and add-reading-note write the generalized model',async t=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'cli-notes-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const cli=path.resolve('bin/neo-memo.mjs');await exec(process.execPath,[cli,'init','store','--store',root]);
- const quick=JSON.parse((await exec(process.execPath,[cli,'add-note','思いついた内容','--store',root])).stdout);assert.equal(quick.type,'note');assert.equal(quick.content,'思いついた内容');
+ const quick=JSON.parse((await exec(process.execPath,[cli,'add-note','思いついた内容','--store',root])).stdout);assert.equal(quick.type,'note');assert.equal(quick.memoEntries[0].content,'思いついた内容');
  await assert.rejects(exec(process.execPath,[cli,'add-reading-note','memo','--store',root]),/book/i);
- const reading=JSON.parse((await exec(process.execPath,[cli,'add-reading-note','--book','The Design of Everyday Things','--location','pp.142-145','--creator','Don Norman','物理的制約','--store',root])).stdout);assert.equal(reading.source.title,'The Design of Everyday Things');assert.equal(reading.source.locator,'pp.142-145');assert.equal(reading.content,'物理的制約');
+ const reading=JSON.parse((await exec(process.execPath,[cli,'add-reading-note','--book','The Design of Everyday Things','--location','pp.142-145','--creator','Don Norman','物理的制約','--store',root])).stdout);assert.equal(reading.source.title,'The Design of Everyday Things');assert.equal(reading.source.locator,'pp.142-145');assert.equal(reading.memoEntries[0].content,'物理的制約');
+ const appended=JSON.parse((await exec(process.execPath,[cli,'note',reading.id,'追記内容','--store',root])).stdout);assert.equal(appended.memoEntries.length,2);assert.equal(appended.memoEntries[1].content,'追記内容');
 });
 test('Item IDs are URL-independent and remain immutable after edits',async t=>{
  const s=await store(t);const [created]=await s.capture({input:'https://example.com/immutable'});const before=s.get(created.id);
@@ -126,11 +133,16 @@ test('v1 data migrates in place while preserving items, IDs, and assets',async t
  await fs.mkdir(path.join(root,'items'),{recursive:true});await fs.mkdir(path.join(root,'assets','aa'),{recursive:true});await fs.mkdir(path.join(root,'state'),{recursive:true});
  const legacyId='legacy-item-0001', digest='a'.repeat(64), legacy={schema:1,id:legacyId,key:'url:https://example.com',url:'https://example.com',original_url:'https://example.com',external_id:'article-42',type:'web',title:'Legacy',description:'',summary:'',summary_basis:'',author:'Author',saved_at:'2020-01-01T00:00:00.000Z',updated_at:'2020-01-02T00:00:00.000Z',tags:['kept'],ai_tags:[],captures:[{source:'slack:C1',event_id:'e1',at:'2020-01-01T00:00:00.000Z',note:'why',source_url:''}],preview:`assets/aa/${digest}.png`,preview_url:'',archived:false,enrichment:{status:'ready',attempts:0},memo:'user memo'};
  const legacyCheckpoint={schema:1,sources:{'slack:C12345':{high:'42.0'}}};await fs.writeFile(path.join(root,'neo-memo.json'),JSON.stringify({schema:1}));await fs.writeFile(path.join(root,'state','sources.json'),JSON.stringify(legacyCheckpoint));await fs.writeFile(path.join(root,'items',`${legacyId}.md`),encodeItem(legacy));await fs.writeFile(path.join(root,'assets','aa',`${digest}.png`),PNG);
- const checkpoints=new ConnectorState(cache),s=await migrateV1Store(root,{checkpoints}),item=s.get(legacyId);assert.equal(item.id,legacyId);assert.equal(item.content,'user memo');assert.equal(item.source.url,'https://example.com');assert.equal(item.source.externalId,'article-42');assert.equal(item.source.creator,'Author');assert.equal(item.createdAt,'2020-01-01T00:00:00.000Z');assert.equal(item.updatedAt,'2020-01-02T00:00:00.000Z');assert.equal(item.captures[0].note,'why');assert.deepEqual(item.tags,['kept']);assert.deepEqual(item.assets,[`sha256:${digest}`]);assert.equal(item.preview,`sha256:${digest}`);assert.equal(await s.resolveAsset(`sha256:${digest}`),path.join(root,'assets','aa',`${digest}.png`));assert.deepEqual(await checkpoints.read(),legacyCheckpoint);await assert.rejects(fs.access(path.join(root,'state')));
+ const checkpoints=new ConnectorState(cache),s=await migrateV1Store(root,{checkpoints}),item=s.get(legacyId);assert.equal(item.id,legacyId);assert.equal(item.schema,3);assert.equal(memoText(item),'user memo');assert.equal(item.memoEntries[0].createdAt,'2020-01-01T00:00:00.000Z');assert.equal(item.source.url,'https://example.com');assert.equal(item.source.externalId,'article-42');assert.equal(item.source.creator,'Author');assert.equal(item.createdAt,'2020-01-01T00:00:00.000Z');assert.equal(item.updatedAt,'2020-01-02T00:00:00.000Z');assert.equal(item.captures[0].note,'why');assert.deepEqual(item.tags,['kept']);assert.deepEqual(item.assets,[`sha256:${digest}`]);assert.equal(item.preview,`sha256:${digest}`);assert.equal(await s.resolveAsset(`sha256:${digest}`),path.join(root,'assets','aa',`${digest}.png`));assert.deepEqual(await checkpoints.read(),legacyCheckpoint);await assert.rejects(fs.access(path.join(root,'state')));
 });
 test('schema v1 marker migrates explicitly without changing storeId or item ID',async t=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'marker-v1-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));await fs.mkdir(path.join(root,'items'),{recursive:true});await fs.mkdir(path.join(root,'assets'));const storeId='11111111-1111-4111-8111-111111111111',id='legacy-marker-item';await fs.writeFile(path.join(root,'neo-memo-store.json'),JSON.stringify({format:'neo-memo-store',schemaVersion:1,storeId}));await fs.writeFile(path.join(root,'items',`${id}.md`),encodeItem({schema:1,id,key:'note:old',url:'',original_url:'',type:'memo',title:'old',saved_at:'2020-01-01T00:00:00.000Z',updated_at:'2020-01-01T00:00:00.000Z',tags:[],ai_tags:[],captures:[{source:'cli',event_id:'1',at:'2020-01-01T00:00:00.000Z',note:'original',source_url:''}],memo:'edited',preview:'',archived:false}));
- await assert.rejects(new Store(root).init(),/Unsupported/);const s=await migrateV1Store(root);assert.equal((await validateStore(root)).storeId,storeId);assert.equal(s.get(id).id,id);assert.equal(s.get(id).content,'edited');
+ await assert.rejects(new Store(root).init(),/Unsupported/);const s=await migrateV1Store(root);assert.equal((await validateStore(root)).storeId,storeId);assert.equal(s.get(id).id,id);assert.equal(memoText(s.get(id)),'edited');
+});
+test('schema v2 migrates content to one memo entry without changing item identity or related data',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'marker-v2-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));await fs.mkdir(path.join(root,'items'),{recursive:true});await fs.mkdir(path.join(root,'assets'));const storeId='22222222-2222-4222-8222-222222222222',id='schema-v2-item',stamp='2022-02-02T02:02:02.000Z';
+ await fs.writeFile(path.join(root,'neo-memo-store.json'),JSON.stringify({format:'neo-memo-store',schemaVersion:2,storeId}));await fs.writeFile(path.join(root,'items',`${id}.md`),encodeItem({schema:2,id,type:'reading_note',title:'',content:'既存本文',source:{kind:'book',title:'Existing Book'},summary:'summary',tags:['kept'],assets:[],createdAt:stamp,updatedAt:stamp,captures:[{source:'manual',event_id:'e',at:stamp,note:'why',source_url:''}],ai_tags:[],archived:false}));
+ await assert.rejects(new Store(root).init(),/Unsupported/);const s=await migrateStore(root),item=s.get(id);assert.equal((await validateStore(root)).schemaVersion,3);assert.equal(item.id,id);assert.equal(item.memoEntries.length,1);assert.equal(item.memoEntries[0].content,'既存本文');assert.equal(item.memoEntries[0].createdAt,stamp);assert.equal(item.source.title,'Existing Book');assert.equal(item.captures[0].note,'why');assert.deepEqual(item.tags,['kept']);assert.match(await fs.readFile(path.join(root,'README.md'),'utf8'),/memoEntries/);
 });
 test('Metadata parser is passive, decodes attributes, resolves image and ignores scripts',()=>{
  const r=parseMetadata('<head><script>"<meta property=\"og:title\" content=\"evil\">"</script><title>Fallback</title><meta property="og:title" content="A &amp; B"><meta name=description content="line &#x65e5;"><meta property="og:image" content="/a.png"></head>','https://example.com/p');
@@ -199,13 +211,13 @@ test('Metadata response cannot overwrite concurrent human edits',async t=>{
  const fetcher=async(url)=>{if(url.endsWith('robots.txt'))return {status:200,headers:{},buffer:Buffer.from('User-agent: *\nAllow: /')};started();await waiting;return {status:200,headers:{'content-type':'text/html'},url,buffer:Buffer.from('<title>Original page title</title><meta name="description" content="remote description">')};};
  const service=await new MemoService(s.root,{fetcher}).init();const [r]=await service.capture({input:'https://concurrent-metadata.example/a'});
  const pending=service.enrich(r.id);await signal;await service.update(r.id,{title:'自分で付けた題',content:'編集中の文章',tags:['自分のタグ']});release();await pending;
- const it=await service.get(r.id);assert.equal(it.title,'自分で付けた題');assert.equal(it.content,'編集中の文章');assert.deepEqual(it.tags,['自分のタグ']);assert.equal(it.description,'remote description');
+ const it=await service.get(r.id);assert.equal(it.title,'自分で付けた題');assert.equal(memoText(it),'編集中の文章');assert.deepEqual(it.tags,['自分のタグ']);assert.equal(it.description,'remote description');
 });
 test('AI response cannot overwrite concurrent memo or manual tags',async t=>{
  const s=await store(t);let release,started;
  const signal=new Promise(r=>started=r),waiting=new Promise(r=>release=r);
  const service=await new MemoService(s.root,{aiOptions:{api:async()=>{started();await waiting;return {status:'completed',output:[{content:[{type:'output_text',text:'{"summary":"summary","tags":["AI tag"]}'}]}]};}}}).init();
- const [r]=await service.capture({input:'https://ai-concurrent.example/test'});const pending=service.ai(r.id,{ai:{model:'fake'}},{openai:'fake'});await signal;await service.update(r.id,{content:'new memo',tags:['human']});release();await pending;const it=await service.get(r.id);assert.equal(it.content,'new memo');assert.deepEqual(it.tags,['human']);assert.deepEqual(it.ai_tags,['AI tag']);
+ const [r]=await service.capture({input:'https://ai-concurrent.example/test'});const pending=service.ai(r.id,{ai:{model:'fake'}},{openai:'fake'});await signal;await service.update(r.id,{content:'new memo',tags:['human']});release();await pending;const it=await service.get(r.id);assert.equal(memoText(it),'new memo');assert.deepEqual(it.tags,['human']);assert.deepEqual(it.ai_tags,['AI tag']);
 });
 test('Pure private memo cannot be sent to AI without explicit notes consent',async t=>{
  const s=await store(t);const [r]=await s.capture({input:'private local thought'});let called=false;

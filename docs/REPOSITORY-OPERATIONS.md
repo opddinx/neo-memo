@@ -38,7 +38,7 @@ neo-memo-data/
 ```json
 {
   "format": "neo-memo-store",
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "storeId": "persistent UUID"
 }
 ```
@@ -55,14 +55,21 @@ Assets are content addressed. An item exposes an asset identifier such as
 `sha256:<hash>`; only the Store access layer resolves it to `assets/…`. Consumers
 must not make a physical asset path part of their external contract.
 
-Schema v2 separates user-authored content from derived and source information:
+Schema v3 separates an ordered user-authored memo history from derived and source information:
 
 ```json
 {
   "id": "01K…",
   "type": "reading_note",
   "title": "optional title of this memo",
-  "content": "the user's canonical text",
+  "memoEntries": [
+    {
+      "id": "01K…",
+      "content": "the user's first canonical memo",
+      "createdAt": "ISO-8601 timestamp",
+      "updatedAt": "ISO-8601 timestamp"
+    }
+  ],
   "source": {
     "kind": "book",
     "title": "The Design of Everyday Things",
@@ -82,6 +89,10 @@ Allowed item types are `note`, `reading_note`, `web`, `x`, and `other`.
 Allowed source kinds are `book`, `web`, `x`, `paper`, `video`, and `other`.
 A `reading_note` requires `source.kind=book` and a non-empty `source.title`;
 `source.creator`, `source.locator`, and the item's own `title` are optional.
+Each `memoEntries` element has an immutable Entry ID and creation timestamp.
+Appending creates a new element; editing changes only the addressed element and its
+`updatedAt`. Entry text is searched in full. `captures[]` remains provenance and the
+memo attached at capture time; it is not reused as the later user-edit history.
 
 The Store layer is exposed from `src/store/` and owns opening, validation,
 initialization, migration, item operations, duplicate lookup, and asset
@@ -107,16 +118,18 @@ Create a Store only through an explicit operation:
 neo-memo init store --store D:/data/neo-memo-data
 ```
 
-To convert an existing v1 Store in place without deleting `items/` or `assets/`:
+To convert an existing schema v1 or v2 Store in place without deleting `items/` or `assets/`:
 
 ```sh
 neo-memo migrate store --store D:/data/neo-memo-data
 ```
 
-Migration creates or upgrades `neo-memo-store.json` to schema v2, preserves the
+Migration creates or upgrades `neo-memo-store.json` to schema v3, preserves the
 existing `storeId` when present, and preserves existing Item IDs and assets.
-Legacy user memo bodies become `content`; source URL/title/creator/external ID
-become structured `source` fields while compatibility metadata is retained.
+Legacy user memo bodies and v2 `content` become the first canonical memo entry.
+Source URL/title/creator/external ID become structured `source` fields while
+compatibility metadata is retained. Migration never silently opens or rewrites an
+older Store: the user must invoke `migrate store` explicitly.
 It also
 rewrites legacy `assets/<prefix>/<hash>.<ext>` references to `sha256:<hash>`, and
 moves connector checkpoints from legacy `state/sources.json` to local cache state.

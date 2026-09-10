@@ -1,5 +1,6 @@
 import { requestBytes, AGENT, apiJSON } from './net.mjs';
 import { now, safeError } from './util.mjs';
+import { memoText } from './store.mjs';
 
 const robotsCache = new Map();
 export function decodeHTML(s = '') {
@@ -109,7 +110,7 @@ export async function aiAnnotate(store, id, { key, model, includeNotes = false, 
   const it = initialItem ? structuredClone(initialItem) : store.get(id);
   if (['note','reading_note'].includes(it.type) && !includeNotes) throw new Error('自分で書いたノートをAIへ送るには、「自分のメモもモデルへ送る」を有効にしてください。');
   const payload = { item_title: it.title, source: it.source, description: it.description, source_text: it.source_text || '' };
-  if (includeNotes) { payload.content = it.content; payload.capture_notes = it.captures.map(c => c.note); }
+  if (includeNotes) { payload.memo_entries = it.memoEntries; payload.memo_text = memoText(it); payload.capture_notes = it.captures.map(c => c.note); }
   const data = await api('https://api.openai.com/v1/responses', {
     token: key, method: 'POST', body: {
       model, store: false, max_output_tokens: 800,

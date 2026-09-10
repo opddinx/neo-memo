@@ -7,10 +7,11 @@ import { extractCapture } from './urls.mjs';
 export const EMPTY_STATE = { schema: 1, sources: {} };
 export const STORE_FILE = 'neo-memo-store.json';
 export const STORE_FORMAT = 'neo-memo-store';
-export const STORE_SCHEMA_VERSION = 2;
+export const STORE_SCHEMA_VERSION = 3;
 const ASSET_RE = /^sha256:([a-f0-9]{64})$/;
 const LEGACY_ASSET_RE = /^assets\/[a-f0-9]{2}\/([a-f0-9]{64})\.(?:png|jpg|webp|gif)$/;
 const assetId = value => LEGACY_ASSET_RE.test(value || '') ? `sha256:${value.match(LEGACY_ASSET_RE)[1]}` : value;
+const STORE_README = '# Neo Memo Data Store\n\nCanonical Neo Memo data. Keep this repository private when it contains personal notes.\n\n- `neo-memo-store.json`: Store identity and schema\n- `items/`: items addressed by immutable Item ID; user notes are ordered `memoEntries` with immutable Entry IDs\n- `assets/`: content-addressed assets (`sha256:<hash>`)\n\n`captures` records source provenance and capture-time notes; later personal additions belong in `memoEntries`. Connector checkpoints, caches, indexes, embeddings, and temporary files do not belong in this Store.\n';
 
 function newItemId() {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -21,7 +22,7 @@ function newItemId() {
 }
 
 export function encodeItem(item) {
-  const body = item.schema === 1 ? item.memo || '' : item.content || '';
+  const body = item.schema === 1 ? item.memo || '' : item.schema === 2 ? item.content || '' : '';
   const meta = { ...item }; delete meta.memo; delete meta.content;
   return `---\n${JSON.stringify(meta, null, 2)}\n---\n\n${body.replace(/\r\n/g, '\n').trimEnd()}\n`;
 }
@@ -29,12 +30,18 @@ export function decodeItem(raw) {
   const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n(?:\r?\n)?([\s\S]*)$/);
   if (!m) throw new Error('Item has no valid frontmatter.');
   const meta = JSON.parse(m[1]);
-  if (![1, 2].includes(meta.schema) || typeof meta.id !== 'string' || !Array.isArray(meta.captures) || !Array.isArray(meta.tags)) throw new Error('Item metadata is invalid.');
+  if (![1, 2, 3].includes(meta.schema) || typeof meta.id !== 'string' || !Array.isArray(meta.captures) || !Array.isArray(meta.tags)) throw new Error('Item metadata is invalid.');
   if (meta.schema === 1 && typeof meta.key !== 'string') throw new Error('Item metadata is invalid.');
   safeId(meta.id);
   if (meta.preview && !ASSET_RE.test(meta.preview) && !LEGACY_ASSET_RE.test(meta.preview)) throw new Error('Item asset identifier is invalid.');
-  return meta.schema === 1 ? { ...meta, memo: m[2].trimEnd() } : { ...meta, content: m[2].trimEnd() };
+  if (meta.schema === 3 && m[2].trim()) throw new Error('Schema v3 Item body must be empty; memoEntries are canonical.');
+  return meta.schema === 1 ? { ...meta, memo: m[2].trimEnd() } : meta.schema === 2 ? { ...meta, content: m[2].trimEnd() } : meta;
 }
+
+function newMemoEntry(content, createdAt = now(), updatedAt = createdAt) {
+  return { id: newItemId(), content: text(content, 1_000_000).trim(), createdAt, updatedAt };
+}
+export function memoText(item) { return (item.memoEntries || []).map(entry => entry.content).filter(Boolean).join('\n\n'); }
 
 function sourceKind(type) { return type === 'x' ? 'x' : type === 'youtube' ? 'video' : type === 'web' || type === 'github' || type === 'note' ? 'web' : 'other'; }
 function itemType(type, url = '') { return type === 'memo' ? 'note' : type === 'x' ? 'x' : url ? 'web' : 'other'; }
@@ -59,9 +66,22 @@ function migrateItemV1(old) {
   };
 }
 
+function migrateItemV2(old) {
+  const next = { ...old, schema: 3 };
+  delete next.content;
+  next.memoEntries = String(old.content || '').trim() ? [newMemoEntry(old.content, old.createdAt || old.saved_at || now(), old.updatedAt || old.updated_at || old.createdAt || now())] : [];
+  return next;
+}
+
 function validateItem(item) {
-  if (item.schema !== 2 || typeof item.id !== 'string' || !['note','reading_note','web','x','other'].includes(item.type) || !Array.isArray(item.captures) || !Array.isArray(item.tags)) throw new Error('Item metadata is invalid.');
+  if (item.schema !== 3 || typeof item.id !== 'string' || !['note','reading_note','web','x','other'].includes(item.type) || !Array.isArray(item.captures) || !Array.isArray(item.tags) || !Array.isArray(item.memoEntries)) throw new Error('Item metadata is invalid.');
   safeId(item.id);
+  if (item.memoEntries.length > 10_000) throw new Error('Item has too many memo entries.');
+  const entryIds = new Set();
+  for (const entry of item.memoEntries) {
+    if (!entry || typeof entry.id !== 'string' || !String(entry.content || '').trim() || typeof entry.createdAt !== 'string' || typeof entry.updatedAt !== 'string' || !Number.isFinite(Date.parse(entry.createdAt)) || !Number.isFinite(Date.parse(entry.updatedAt))) throw new Error('Memo entry is invalid.');
+    safeId(entry.id); if (entryIds.has(entry.id)) throw new Error('Memo entry IDs must be unique.'); entryIds.add(entry.id);
+  }
   if (item.type === 'reading_note' && (item.source?.kind !== 'book' || !String(item.source?.title || '').trim())) throw new Error('Reading note requires source.kind=book and source.title.');
   if (item.source && !['book','web','x','paper','video','other'].includes(item.source.kind)) throw new Error('Item source kind is invalid.');
   for (const id of [...(item.assets || []), item.preview].filter(Boolean)) if (!ASSET_RE.test(assetId(id))) throw new Error('Item asset identifier is invalid.');
@@ -69,7 +89,7 @@ function validateItem(item) {
 
 export async function validateStore(root) {
   const absolute = path.resolve(root), marker = path.join(absolute, STORE_FILE);
-  if (!(await exists(marker))) throw new Error(`Not a Neo Memo Store: ${absolute}. Use \`neo-memo init store --store <path>\` for an empty folder, or \`neo-memo migrate store --store <path>\` for v1 data.`);
+  if (!(await exists(marker))) throw new Error(`Not a Neo Memo Store: ${absolute}. Use \`neo-memo init store --store <path>\` for an empty folder, or \`neo-memo migrate store --store <path>\` for legacy data.`);
   const meta = await readJSON(marker);
   if (meta?.format !== STORE_FORMAT) throw new Error(`Invalid ${STORE_FILE}: format must be ${STORE_FORMAT}.`);
   if (meta?.schemaVersion !== STORE_SCHEMA_VERSION) throw new Error(`Unsupported Neo Memo Store schemaVersion: ${meta?.schemaVersion}.`);
@@ -85,29 +105,32 @@ export async function initStore(root) {
   await writeJSON(path.join(absolute, STORE_FILE), { format: STORE_FORMAT, schemaVersion: STORE_SCHEMA_VERSION, storeId: randomUUID() });
   await atomicWrite(path.join(absolute, '.gitignore'), '*.tmp\n.DS_Store\n.env\n.env.*\n');
   await atomicWrite(path.join(absolute, '.gitattributes'), '*.md text eol=lf\n*.json text eol=lf\nassets/** binary\n');
-  await atomicWrite(path.join(absolute, 'README.md'), '# Neo Memo Data Store\n\nCanonical Neo Memo data. Keep this repository private when it contains personal notes.\n\n- `neo-memo-store.json`: Store identity and schema\n- `items/`: Markdown items addressed by immutable item ID\n- `assets/`: content-addressed assets (`sha256:<hash>`)\n\nConnector checkpoints, caches, indexes, embeddings, and temporary files do not belong in this Store.\n');
+  await atomicWrite(path.join(absolute, 'README.md'), STORE_README);
   for (const dir of ['items', 'assets']) await fs.mkdir(path.join(absolute, dir), { recursive: true });
   return new Store(absolute).init();
 }
 
-export async function migrateV1Store(root, { checkpoints } = {}) {
+export async function migrateStore(root, { checkpoints } = {}) {
   const absolute = path.resolve(root);
   const markerPath = path.join(absolute, STORE_FILE), marker = await readJSON(markerPath, null);
   if (marker?.format === STORE_FORMAT && marker.schemaVersion === STORE_SCHEMA_VERSION) return new Store(absolute).init();
-  if (marker && (marker.format !== STORE_FORMAT || marker.schemaVersion !== 1)) throw new Error('Unsupported legacy Neo Memo data schema.');
+  if (marker && (marker.format !== STORE_FORMAT || ![1, 2].includes(marker.schemaVersion))) throw new Error('Unsupported legacy Neo Memo data schema.');
   const legacy = marker || await readJSON(path.join(absolute, 'neo-memo.json'));
   if (!marker && legacy?.schema !== 1) throw new Error('Unsupported legacy Neo Memo data schema.');
   const legacyCheckpoints = await readJSON(path.join(absolute, 'state', 'sources.json'), null);
   for (const name of await fs.readdir(path.join(absolute, 'items'))) {
     if (!name.endsWith('.md')) continue;
     const file = path.join(absolute, 'items', name), item = decodeItem(await fs.readFile(file, 'utf8'));
-    if (item.schema === 1) await atomicWrite(file, encodeItem(migrateItemV1(item)));
+    const migrated = item.schema === 1 ? migrateItemV2(migrateItemV1(item)) : item.schema === 2 ? migrateItemV2(item) : item;
+    if (migrated !== item) await atomicWrite(file, encodeItem(migrated));
   }
   await writeJSON(markerPath, { format: STORE_FORMAT, schemaVersion: STORE_SCHEMA_VERSION, storeId: marker?.storeId || randomUUID() });
+  await atomicWrite(path.join(absolute, 'README.md'), STORE_README);
   if (legacyCheckpoints && checkpoints) await checkpoints.write(legacyCheckpoints);
   await fs.rm(path.join(absolute, 'state'), { recursive: true, force: true });
   return new Store(absolute).init();
 }
+export const migrateV1Store = migrateStore;
 
 export class Store {
   constructor(root) { this.root = path.resolve(root); this.items = new Map(); }
@@ -129,8 +152,9 @@ export class Store {
   }
   async write(item) { validateItem(item); await atomicWrite(await assertNoSymlink(this.root, `items/${item.id}.md`), encodeItem(item)); this.items.set(item.id, structuredClone(item)); return item; }
   findByCanonicalSource(key) { const found = [...this.items.values()].find(item => item.key === key); return found ? structuredClone(found) : null; }
-  async createItem({ type = 'other', title = '', content = '', source, summary = '', tags = [], assets = [], captures = [] }) {
-    const stamp = now(), item = { schema: 2, id: newItemId(), type, title: text(title), content: text(content, 1_000_000), ...(source ? { source: structuredClone(source) } : {}), summary: text(summary, 100_000), tags: [...tags], assets: [...assets], createdAt: stamp, updatedAt: stamp, captures: structuredClone(captures), ai_tags: [], archived: false };
+  async createItem({ type = 'other', title = '', content = '', memoEntries, source, summary = '', tags = [], assets = [], captures = [] }) {
+    const stamp = now(), entries = memoEntries ? structuredClone(memoEntries) : String(content || '').trim() ? [newMemoEntry(content, stamp)] : [];
+    const item = { schema: 3, id: newItemId(), type, title: text(title), memoEntries: entries, ...(source ? { source: structuredClone(source) } : {}), summary: text(summary, 100_000), tags: [...tags], assets: [...assets], createdAt: stamp, updatedAt: stamp, captures: structuredClone(captures), ai_tags: [], archived: false };
     await this.write(item); return structuredClone(item);
   }
   async createNote(content, options = {}) { if (!String(content || '').trim()) throw new Error('Quick Note content is required.'); return this.createItem({ type: 'note', content, ...options }); }
@@ -150,7 +174,7 @@ export class Store {
       const old = this.findByCanonicalSource(entry.key), id = old?.id || newItemId();
       if (old?.captures.some(c => c.source === source && c.event_id === event)) { results.push({ id, status: 'replayed' }); continue; }
       const stamp = now(), kind = entry.type === 'x' ? 'x' : 'web';
-      const item = old || { schema: 2, id, key: entry.key, url: entry.url, original_url: entry.original_url, type: entry.type === 'x' ? 'x' : 'web', title: '', content: '', source: { kind, title: hints.title || (entry.type === 'x' ? `X post ${entry.key.slice(2)}` : new URL(entry.url).hostname), ...(hints.author ? { creator: hints.author } : {}), url: entry.url, ...(entry.type === 'x' ? { externalId: entry.key.slice(2) } : {}) }, description: hints.description || '', summary: '', summary_basis: '', createdAt: stamp, updatedAt: stamp, saved_at: stamp, updated_at: stamp, tags: [], ai_tags: [], captures: [], assets: [], preview: '', preview_url: hints.preview_url || '', archived: false, enrichment: { status: 'pending', attempts: 0 } };
+      const item = old || { schema: 3, id, key: entry.key, url: entry.url, original_url: entry.original_url, type: entry.type === 'x' ? 'x' : 'web', title: '', memoEntries: [], source: { kind, title: hints.title || (entry.type === 'x' ? `X post ${entry.key.slice(2)}` : new URL(entry.url).hostname), ...(hints.author ? { creator: hints.author } : {}), url: entry.url, ...(entry.type === 'x' ? { externalId: entry.key.slice(2) } : {}) }, description: hints.description || '', summary: '', summary_basis: '', createdAt: stamp, updatedAt: stamp, saved_at: stamp, updated_at: stamp, tags: [], ai_tags: [], captures: [], assets: [], preview: '', preview_url: hints.preview_url || '', archived: false, enrichment: { status: 'pending', attempts: 0 } };
       item.captures.push({ source, event_id: event, at, note: reason, source_url }); item.updatedAt = item.updated_at = now();
       if (!old && hints.source_text) item.source_text = text(hints.source_text, 100_000);
       await this.write(item); results.push({ id, status: old ? 'appended' : 'created' });
@@ -161,15 +185,29 @@ export class Store {
   async update(id, patch) {
     const item = this.get(id); if ('title' in patch && patch.title !== item.title) item.manual_title = true;
     if ('memo' in patch && !('content' in patch)) patch = { ...patch, content: patch.memo };
-    for (const key of ['title', 'content']) if (key in patch) item[key] = text(patch[key], key === 'content' ? 1_000_000 : 10_000);
+    if ('title' in patch) item.title = text(patch.title, 10_000);
+    if ('content' in patch) {
+      if (item.memoEntries.length > 1) throw new Error('Legacy content replacement cannot overwrite multiple memo entries. Update an entry by ID or append a new entry.');
+      const value = text(patch.content, 1_000_000).trim(), first = item.memoEntries[0];
+      item.memoEntries = value ? [{ id: first?.id || newItemId(), content: value, createdAt: first?.createdAt || now(), updatedAt: now() }] : [];
+    }
     if ('tags' in patch) { if (!Array.isArray(patch.tags) || patch.tags.length > 100) throw new Error('Invalid tags.'); item.tags = [...new Set(patch.tags.map(value => text(value, 100).trim()).filter(Boolean))]; }
     if ('archived' in patch) item.archived = Boolean(patch.archived);
     item.updatedAt = item.updated_at = now(); return this.write(item);
   }
+  async appendMemoEntry(id, content) {
+    const item = this.get(id), value = text(content, 1_000_000).trim(); if (!value) throw new Error('Memo entry content is required.');
+    item.memoEntries.push(newMemoEntry(value)); item.updatedAt = item.updated_at = now(); return this.write(item);
+  }
+  async updateMemoEntry(id, entryId, content) {
+    const item = this.get(id), entry = item.memoEntries.find(value => value.id === safeId(entryId)); if (!entry) throw new Error('Memo entry not found.');
+    const value = text(content, 1_000_000).trim(); if (!value) throw new Error('Memo entry content is required.');
+    entry.content = value; entry.updatedAt = now(); item.updatedAt = item.updated_at = entry.updatedAt; return this.write(item);
+  }
   list({ query = '', type = '', tag = '', archived = false } = {}) {
     const terms = normalizeText(query).split(/\s+/).filter(Boolean);
     return [...this.items.values()].filter(item => Boolean(item.archived) === archived && (!type || item.type === type) && (!tag || [...item.tags, ...(item.ai_tags || [])].includes(tag))).map(item => {
-      const fields = [item.title, item.content, item.source?.title, item.source?.creator, item.source?.locator, item.summary, item.description, item.url, (item.captures || []).map(c => c.note).join(' '), [...item.tags, ...(item.ai_tags || [])].join(' ')].map(normalizeText);
+      const fields = [item.title, memoText(item), item.source?.title, item.source?.creator, item.source?.locator, item.summary, item.description, item.url, (item.captures || []).map(c => c.note).join(' '), [...item.tags, ...(item.ai_tags || [])].join(' ')].map(normalizeText);
       if (!terms.every(term => fields.some(field => field.includes(term)))) return null;
       const score = terms.reduce((total, term) => total + (fields[0].includes(term) || fields[2].includes(term) ? 4 : 0) + (fields[1].includes(term) || fields[5].includes(term) ? 2 : 0) + (fields[9].includes(term) ? 2 : 0), 0);
       return { ...structuredClone(item), score };
